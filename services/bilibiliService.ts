@@ -22,15 +22,17 @@ export const fetchCommentsByBV = async (bvId: string, onLog: (msg: string) => vo
 async function fetchOidByBv(bvId: string, onLog: (msg: string) => void): Promise<string | null> {
   try {
     const res = await fetch(`/api/proxy?type=view&bvid=${bvId}`);
-    if (!res.ok) throw new Error(`Proxy error: ${res.status}`);
+    if (!res.ok) throw new Error(`Proxy network error: ${res.status}`);
     
     const json = await res.json();
     if (json.code === 0 && json.data?.aid) {
       return json.data.aid.toString();
+    } else {
+      onLog(`[Error] 解析 OID 失败: ${json.message || json.code}`);
     }
     return null;
-  } catch (e) {
-    console.error(e);
+  } catch (e: any) {
+    onLog(`[Error] OID 请求异常: ${e.message}`);
     return null;
   }
 }
@@ -47,9 +49,12 @@ async function fetchCommentsByOid(oid: string, bvId: string, onLog: (msg: string
     try {
       onLog(`[Fetch] 正在抓取第 ${page}/${page === 1 ? '?' : totalPage} 页...`);
       
-      // 将 bvid 也传过去，用于后端伪造 Referer
       const res = await fetch(`/api/proxy?type=reply&oid=${oid}&bvid=${bvId}&pn=${page}`);
-      if (!res.ok) throw new Error(`Proxy network error: ${res.status}`);
+      
+      if (!res.ok) {
+        onLog(`[Error] 代理服务响应错误: HTTP ${res.status}`);
+        break;
+      }
 
       const json = await res.json();
 
@@ -70,35 +75,38 @@ async function fetchCommentsByOid(oid: string, bvId: string, onLog: (msg: string
           allComments = [...allComments, ...replies];
           emptyPageCount = 0; // 重置空页计数
         } else {
-          // B站 API 有时在中间页返回空，如果不严重则继续
           emptyPageCount++;
           if (page === 1) {
-             onLog(`[Warn] 第 1 页未返回数据 (可能触发了游客限制)`);
+             onLog(`[Warn] 第 1 页未返回数据 (API 返回空列表)`);
           } else {
-             onLog(`[Warn] 第 ${page} 页无更多数据`);
+             onLog(`[Warn] 第 ${page} 页无数据`);
           }
           
-          // 如果连续3页都空，且已经抓了一些数据，或者总页数还是1，就停止
+          // 如果连续3页都空，停止
           if (emptyPageCount >= 3) {
-             onLog(`[Info] 连续多页为空，提前结束抓取`);
+             onLog(`[Info] 连续空页，结束抓取`);
              break;
           }
         }
       } else {
         if (json.code === -352) {
-             throw new Error("触发 B 站风控 (-352)。Vercel 代理也遇到了挑战，请稍后再试。");
+             throw new Error("触发 B 站风控 (-352)。当前环境被 B 站限制，请稍后再试。");
         }
-        onLog(`[Warn] API 返回异常: code=${json.code}`);
+        onLog(`[Warn] API 返回业务错误: code=${json.code}, message=${json.message}`);
       }
     } catch (error: any) {
-      onLog(`[Error] 第 ${page} 页抓取失败: ${error.message}`);
+      onLog(`[Error] 第 ${page} 页抓取异常: ${error.message}`);
     }
 
     page++;
-    // 简单的限流
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 600)); // 稍作延时
   }
 
-  onLog(`[Complete] 抓取完成，共 ${allComments.length} 条评论`);
+  if (allComments.length === 0) {
+    onLog(`[Warn] 未抓取到任何评论。建议检查 BV 号是否正确或是否被 B 站风控。`);
+  } else {
+    onLog(`[Complete] 抓取完成，共 ${allComments.length} 条评论`);
+  }
+  
   return allComments;
 }

@@ -5,23 +5,32 @@
 export default async function handler(req, res) {
   const { type, oid, bvid, pn = 1 } = req.query;
 
-  // 生成随机 buvid3 以模拟真实浏览器访问 (绕过部分游客限制)
-  const generateBuvid = () => {
+  // 生成随机 UUID 辅助生成 Cookie
+  const genUUID = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
         return v.toString(16);
-    }) + 'infoc';
+    });
   };
 
-  // 1. 伪造浏览器请求头
+  // 1. 伪造更真实的浏览器请求头
+  // 随机轮询 User-Agent，降低被判定为机器人的概率
+  const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  ];
+  const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
+  
   const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': `https://www.bilibili.com/video/${bvid || ('av' + oid)}`,
+    'User-Agent': ua,
+    'Referer': `https://www.bilibili.com/video/${bvid || ('av' + oid)}/`,
     'Origin': 'https://www.bilibili.com',
     'Accept': 'application/json, text/plain, */*',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Cookie': `buvid3=${generateBuvid()};` // 关键：添加 Cookie
+    // 关键：模拟游客 Cookie
+    'Cookie': `buvid3=${genUUID()}infoc; _uuid=${genUUID()}; b_nut=${Date.now()}; CURRENT_FNVAL=4048;`
   };
 
   let targetUrl = '';
@@ -33,9 +42,9 @@ export default async function handler(req, res) {
     targetUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
   } else if (type === 'reply') {
     // 获取评论列表
-    // sort=0: 按时间排序
+    // sort=0: 按时间排序 (Time)
     // ps=20: 每页数量
-    // 注意：nohot=1 有时会导致第一页为空，这里暂时去掉，在前端去重即可
+    // 移除 nohot=1，虽然它能过滤热评，但在无登录态下容易导致数据为空
     if (!oid) return res.status(400).json({ code: -1, message: 'Missing oid' });
     targetUrl = `https://api.bilibili.com/x/v2/reply?type=1&oid=${oid}&sort=0&ps=20&pn=${pn}`;
   } else {
@@ -46,15 +55,14 @@ export default async function handler(req, res) {
     // 3. 发起请求
     const response = await fetch(targetUrl, { headers });
     
+    // 即使状态码是 200，内容也可能是错误信息，直接透传给前端处理
     if (!response.ok) {
-      return res.status(response.status).json({ code: -1, message: `Bilibili API Error: ${response.status}` });
+      return res.status(response.status).json({ code: -1, message: `Bilibili API Http Error: ${response.status}` });
     }
 
     const data = await response.json();
-
-    // 4. 返回数据给前端
     return res.status(200).json(data);
   } catch (error) {
-    return res.status(500).json({ code: -1, message: 'Internal Server Error', error: error.message });
+    return res.status(500).json({ code: -1, message: 'Vercel Proxy Error', error: error.message });
   }
 }
