@@ -1,23 +1,23 @@
 import { CommentUser, VideoInfo, ReplyData, BiliApiResponse } from '../../types';
 
-// --- MOCK DATA FOR FALLBACK (Demo Mode) ---
+// --- MOCK DATA FOR FALLBACK (演示模式数据) ---
 const MOCK_OID = 999999;
 
 const MOCK_VIDEO_INFO: VideoInfo = {
   aid: MOCK_OID,
   bvid: 'BV1MockDemo',
-  title: '【演示模式】后端未连接 - 使用模拟数据',
+  title: '【演示模式】后端未连接 - 自动启用模拟数据',
   pic: 'https://images.unsplash.com/photo-1626544827763-d516dce335ca?q=80&w=800&auto=format&fit=crop',
   owner: {
-    name: 'Vercel Preview',
+    name: 'Vercel 演示账号',
     face: 'https://api.dicebear.com/7.x/avataaars/svg?seed=vercel'
   }
 };
 
-const MOCK_COMMENTS: CommentUser[] = Array.from({ length: 25 }).map((_, i) => ({
+const MOCK_COMMENTS: CommentUser[] = Array.from({ length: 30 }).map((_, i) => ({
   mid: `mock_${i}`,
-  uname: `测试用户 ${i + 1}`,
-  message: `这是一个模拟评论 #${i + 1}。当前后端 API 不可用 (404)，系统已自动切换到演示模式。`,
+  uname: `测试用户_${i + 1}`,
+  message: `这是一个模拟评论 #${i + 1}。当前后端 API 不可用 (404)，系统已自动切换到演示模式。祝大家代码无 Bug！`,
   avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${i}`,
   ctime: Date.now() / 1000 - i * 3600,
   level: Math.floor(Math.random() * 7) // Random level 0-6
@@ -52,11 +52,11 @@ export async function getVideoInfo(bv: string): Promise<VideoInfo> {
     if (json.code === 0 && json.data?.aid) {
       return json.data; 
     }
-    throw new Error(json.message || "Video not found");
+    throw new Error(json.message || "未找到该视频信息");
   } catch (err: any) {
     // Fallback to mock data if API is missing (404) or Network Fail
     if (err.message === "API_NOT_FOUND" || err.message.includes("Failed to fetch")) {
-      console.warn("Backend API unavailable. Switching to Mock Data mode.");
+      console.warn("后端 API 不可用，切换至模拟数据模式。");
       return MOCK_VIDEO_INFO;
     }
     throw err;
@@ -84,7 +84,7 @@ export async function getAllComments(
       const json = await fetchJson<BiliApiResponse<ReplyData>>(`/api/proxy?type=reply&oid=${oid}&next=${page}`);
 
       if (json.code !== 0) {
-        console.warn(`Page ${page} failed: ${json.message}`);
+        console.warn(`第 ${page} 页获取失败: ${json.message}`);
         break;
       }
 
@@ -122,7 +122,7 @@ export async function getAllComments(
   } catch (err: any) {
      // If API fails mid-way with 404, fallback
      if (err.message === "API_NOT_FOUND") {
-       console.warn("Backend API unavailable during fetch. Returning Mock Data.");
+       console.warn("抓取过程中后端断开，返回模拟数据。");
        if (onProgress) onProgress(MOCK_COMMENTS.length, 1);
        return MOCK_COMMENTS;
      }
