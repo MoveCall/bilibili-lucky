@@ -245,7 +245,7 @@ const App: React.FC = () => {
                 {/* Log Area */}
                 <div className="mt-2">
                   <div className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wider flex items-center gap-2">
-                    <span>> Operation Logs</span>
+                    <span> Operation Logs</span>
                   </div>
                   <Logger logs={logs} className="h-48" />
                 </div>
