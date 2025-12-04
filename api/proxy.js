@@ -1,68 +1,57 @@
 // api/proxy.js
-// 运行在 Vercel 边缘网络的 Serverless Function
-// 负责转发 B 站 API 请求，解决 CORS 和 UA 风控问题
+// Runtime: Node.js 18+ (Vercel Edge/Serverless)
 
 export default async function handler(req, res) {
-  const { type, oid, bvid, pn = 1 } = req.query;
+  // 1. Get parameters
+  // type: 'view' (video info) or 'reply' (comments)
+  // bvid: Bilibili Video ID
+  // oid: Object ID (AV ID)
+  // next: Page number for comments
+  const { type = 'reply', oid, bvid, next = 1 } = req.query;
 
-  // 生成随机 UUID 辅助生成 Cookie
-  const genUUID = () => {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-  };
+  // 2. Forge a random buvid3 (Simulate visitor fingerprint to avoid simple anti-scraping)
+  const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
 
-  // 1. 伪造更真实的浏览器请求头
-  // 随机轮询 User-Agent，降低被判定为机器人的概率
-  const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  ];
-  const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
-  
+  // 3. Forge Browser Headers
   const headers = {
-    'User-Agent': ua,
-    'Referer': `https://www.bilibili.com/video/${bvid || ('av' + oid)}/`,
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://www.bilibili.com/',
     'Origin': 'https://www.bilibili.com',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    // 关键：模拟游客 Cookie
-    'Cookie': `buvid3=${genUUID()}infoc; _uuid=${genUUID()}; b_nut=${Date.now()}; CURRENT_FNVAL=4048;`
+    'Cookie': `buvid3=${uuid}infoc;` 
   };
-
-  let targetUrl = '';
-
-  // 2. 根据请求类型构建 B 站 API URL
-  if (type === 'view') {
-    // 获取视频详情 (用于 BV -> OID)
-    if (!bvid) return res.status(400).json({ code: -1, message: 'Missing bvid' });
-    targetUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
-  } else if (type === 'reply') {
-    // 获取评论列表
-    // sort=0: 按时间排序 (Time)
-    // ps=20: 每页数量
-    // 移除 nohot=1，虽然它能过滤热评，但在无登录态下容易导致数据为空
-    if (!oid) return res.status(400).json({ code: -1, message: 'Missing oid' });
-    targetUrl = `https://api.bilibili.com/x/v2/reply?type=1&oid=${oid}&sort=0&ps=20&pn=${pn}`;
-  } else {
-    return res.status(400).json({ code: -1, message: 'Invalid type parameter' });
-  }
 
   try {
-    // 3. 发起请求
-    const response = await fetch(targetUrl, { headers });
-    
-    // 即使状态码是 200，内容也可能是错误信息，直接透传给前端处理
-    if (!response.ok) {
-      return res.status(response.status).json({ code: -1, message: `Bilibili API Http Error: ${response.status}` });
+    let targetUrl = '';
+
+    // === Scenario A: Frontend provides BV ID, we need to find the OID ===
+    if (type === 'view') {
+      if (!bvid) return res.status(400).json({ error: 'Missing bvid parameter' });
+      targetUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
+    } 
+    // === Scenario B: Frontend has OID, we fetch comments ===
+    else {
+      if (!oid) return res.status(400).json({ error: 'Missing oid parameter' });
+      // mode=2 (Time descending) captures newest comments
+      // mode=3 (Hot)
+      targetUrl = `https://api.bilibili.com/x/v2/reply/main?csrf=PRO&mode=2&next=${next}&oid=${oid}&plat=1&type=1`;
     }
 
+    // 4. Execute Fetch
+    const response = await fetch(targetUrl, { headers });
     const data = await response.json();
-    return res.status(200).json(data);
+
+    // 5. Error Handling
+    if (data.code !== 0) {
+      return res.status(200).json({ code: data.code, message: data.message || "Bilibili API Error", data: null });
+    }
+
+    // 6. Return Data
+    res.status(200).json(data);
+
   } catch (error) {
-    return res.status(500).json({ code: -1, message: 'Vercel Proxy Error', error: error.message });
+    res.status(500).json({ error: 'Server Error', details: error.message });
   }
 }

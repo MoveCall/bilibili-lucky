@@ -3,7 +3,7 @@ export interface CommentUser {
   uname: string;
   message: string;
   avatar: string;
-  ctime?: number; // Comment timestamp
+  ctime?: number;
   level: number; // User level (0-6)
 }
 
@@ -14,7 +14,7 @@ export interface BiliApiResponse<T> {
 }
 
 export interface VideoInfo {
-  aid: number; // This is the OID
+  aid: number;
   bvid: string;
   title: string;
   pic: string;

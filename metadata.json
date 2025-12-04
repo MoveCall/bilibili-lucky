@@ -1,5 +1,5 @@
 {
-  "name": "Bilibili Lucky Draw Pro",
-  "description": "A professional Bilibili comment lottery tool featuring keyword filtering and duplicate removal.",
+  "name": "Bilibili Lucky Draw",
+  "description": "A serverless-ready Bilibili comment lottery tool using Vercel functions.",
   "requestFramePermissions": []
 }
