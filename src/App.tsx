@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, Trash2, Filter } from 'lucide-react';
+import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, Trash2, Filter, AlertTriangle } from 'lucide-react';
 
 import { Input } from './components/Input';
 import { Button } from './components/Button';
@@ -27,6 +27,7 @@ const App: React.FC = () => {
   const [filteredComments, setFilteredComments] = useState<CommentUser[]>([]);
   
   const [status, setStatus] = useState<AppState>(AppState.IDLE);
+  const [isMockMode, setIsMockMode] = useState(false);
   
   // Filters
   const [keyword, setKeyword] = useState('');
@@ -62,6 +63,7 @@ const App: React.FC = () => {
     setAllComments([]);
     setFilteredComments([]);
     setWinner(null);
+    setIsMockMode(false);
 
     try {
       addLog(`Analyzing: ${bvId}...`, 'info');
@@ -69,14 +71,22 @@ const App: React.FC = () => {
       // 1. Get Info
       const info = await getVideoInfo(bvId);
       setVideoInfo(info);
-      addLog(`Parsed Success: BV=${info.bvid} => OID=${info.aid}`, 'success');
+      
+      // Check if we fell back to mock data (OID 999999 is our magic number)
+      if (info.aid === 999999) {
+          setIsMockMode(true);
+          addLog('⚠️ API Unreachable (404). Switched to DEMO MODE.', 'warning');
+          addLog(`Virtual Video Loaded: ${info.title}`, 'success');
+      } else {
+          addLog(`Parsed Success: BV=${info.bvid} => OID=${info.aid}`, 'success');
+      }
       
       // 2. Get Comments
       setStatus(AppState.FETCHING_COMMENTS);
       addLog('Starting fetch sequence...', 'info');
       
       const comments = await getAllComments(info.aid, (count, page) => {
-        if (page % 5 === 0) { // Log every 5 pages to avoid spam
+        if (page % 5 === 0 || page === 1) { 
             addLog(`Fetched page ${page}, total ${count} comments...`, 'info');
         }
       });
@@ -100,7 +110,6 @@ const App: React.FC = () => {
 
   const applyFilters = () => {
     let result = [...allComments];
-    const initialCount = result.length;
 
     // Level Filter
     if (minLevel > 0) {
@@ -123,7 +132,6 @@ const App: React.FC = () => {
     }
 
     setFilteredComments(result);
-    // Don't log on every render, maybe just display in UI stats
   };
 
   useEffect(() => {
@@ -172,7 +180,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-[#f1f2f5] text-gray-800 font-sans pb-12">
       
       {/* Navbar */}
-      <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
+      <nav className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-bili-pink text-white p-1.5 rounded-lg">
@@ -182,9 +190,9 @@ const App: React.FC = () => {
               Bilibili <span className="text-bili-pink">Lucky Draw</span> Pro
             </h1>
           </div>
-          <div className="flex items-center gap-2 text-sm font-medium text-green-600 bg-green-50 px-3 py-1 rounded-full border border-green-100">
-            <CheckCircle2 className="w-4 h-4" />
-            Vercel Powered
+          <div className={`flex items-center gap-2 text-sm font-medium px-3 py-1 rounded-full border ${isMockMode ? 'text-orange-600 bg-orange-50 border-orange-100' : 'text-green-600 bg-green-50 border-green-100'}`}>
+            {isMockMode ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+            {isMockMode ? 'Demo Mode' : 'Vercel Powered'}
           </div>
         </div>
       </nav>
@@ -207,10 +215,10 @@ const App: React.FC = () => {
               <div className="p-5 flex flex-col gap-4">
                 {/* Tabs */}
                 <div className="flex bg-gray-100 p-1 rounded-xl mb-2">
-                  <button className="flex-1 bg-white shadow-sm text-bili-pink font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-2">
+                  <button className="flex-1 bg-white shadow-sm text-bili-pink font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition-all">
                     <CloudLightning className="w-4 h-4" /> Online Fetch
                   </button>
-                  <button className="flex-1 text-gray-500 font-medium py-2 rounded-lg text-sm hover:text-gray-700 transition-colors">
+                  <button disabled className="flex-1 text-gray-400 font-medium py-2 rounded-lg text-sm cursor-not-allowed">
                     Paste JSON
                   </button>
                 </div>
@@ -220,7 +228,7 @@ const App: React.FC = () => {
                   <div className="flex gap-2">
                     <span className="flex items-center justify-center px-3 bg-gray-100 text-gray-500 font-bold rounded-xl border border-gray-200">BV</span>
                     <input 
-                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-bili-pink focus:ring-2 focus:ring-bili-pink/20 outline-none font-medium"
+                      className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-bili-pink focus:ring-2 focus:ring-bili-pink/20 outline-none font-medium text-gray-700"
                       placeholder="1gpSFBGE2s"
                       value={bvId}
                       onChange={e => setBvId(e.target.value)}
@@ -245,7 +253,7 @@ const App: React.FC = () => {
                 {/* Log Area */}
                 <div className="mt-2">
                   <div className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wider flex items-center gap-2">
-                    <span> Operation Logs</span>
+                    <span>> Operation Logs</span>
                   </div>
                   <Logger logs={logs} className="h-48" />
                 </div>
@@ -263,9 +271,9 @@ const App: React.FC = () => {
               <div className="p-5 space-y-5">
                 
                 <div>
-                   <label className="text-sm font-semibold text-gray-700 mb-2 block">Keywords (Required)</label>
+                   <label className="text-sm font-semibold text-gray-700 mb-2 block">Keywords (Optional)</label>
                    <Input 
-                      placeholder="e.g., 'Entry', 'Wish'"
+                      placeholder="e.g., 'In', 'Wish'"
                       value={keyword}
                       onChange={e => setKeyword(e.target.value)}
                       className="text-sm"
@@ -285,7 +293,7 @@ const App: React.FC = () => {
                    <select 
                       value={minLevel} 
                       onChange={e => setMinLevel(Number(e.target.value))}
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 outline-none bg-white text-sm"
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 outline-none bg-white text-sm focus:border-bili-pink"
                    >
                       <option value="0">Lv0 (All Users)</option>
                       <option value="1">Lv1 (Member)</option>
@@ -309,7 +317,7 @@ const App: React.FC = () => {
                    <MonitorPlay className="w-6 h-6 text-gray-700" />
                    <h2 className="text-xl font-bold text-gray-800">Lottery Screen</h2>
                    {videoInfo && (
-                      <span className="ml-auto text-sm text-gray-500 truncate max-w-[200px]">
+                      <span className="ml-auto text-sm text-gray-500 truncate max-w-[200px] bg-gray-100 px-3 py-1 rounded-full">
                         {videoInfo.title}
                       </span>
                    )}
@@ -323,36 +331,37 @@ const App: React.FC = () => {
                    </div>
 
                    {/* Main Display Area */}
-                   <div className="relative z-10 w-full max-w-2xl aspect-video bg-[#1a1b2e] rounded-2xl shadow-2xl flex flex-col items-center justify-center overflow-hidden border-4 border-gray-800">
+                   <div className="relative z-10 w-full max-w-2xl aspect-video bg-[#1a1b2e] rounded-2xl shadow-2xl flex flex-col items-center justify-center overflow-hidden border-4 border-gray-800 ring-4 ring-gray-200/50">
                       
                       {status === AppState.IDLE || status === AppState.FETCHING_INFO || status === AppState.FETCHING_COMMENTS ? (
-                          <div className="text-center p-6">
-                              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
-                                  <Upload className="w-8 h-8 text-white/50" />
+                          <div className="text-center p-6 animate-pulse">
+                              <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-4 backdrop-blur-sm border border-white/10">
+                                  <Upload className="w-10 h-10 text-white/40" />
                               </div>
                               <p className="text-gray-400 font-medium">Please load data first</p>
                           </div>
                       ) : status === AppState.DRAWING ? (
                           <div className="w-full h-full flex items-center justify-center p-8 bg-[#1a1b2e]">
                               {currentCandidate && (
-                                  <div className="scale-150 transform transition-all">
-                                      <CommentCard user={currentCandidate} className="bg-white/90 shadow-2xl" />
+                                  <div className="scale-150 transform transition-all duration-75">
+                                      <CommentCard user={currentCandidate} className="bg-white/95 shadow-2xl border-2 border-bili-pink" />
                                   </div>
                               )}
                           </div>
                       ) : status === AppState.FINISHED && winner ? (
                           <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-pink-900/50 to-blue-900/50 relative">
                               <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-                              <div className="animate-bounce mb-6 text-4xl">👑</div>
-                              <div className="scale-125 transform">
-                                  <CommentCard user={winner} isWinner className="shadow-[0_0_50px_rgba(251,114,153,0.4)]" />
+                              <div className="animate-bounce mb-8 text-5xl">👑</div>
+                              <div className="scale-125 transform transition-all duration-500">
+                                  <CommentCard user={winner} isWinner className="shadow-[0_0_60px_rgba(251,114,153,0.6)] ring-4 ring-yellow-400" />
                               </div>
+                              <p className="mt-8 text-white/80 font-bold tracking-widest uppercase text-sm">Winner Selected</p>
                           </div>
                       ) : (
                         // Ready State
-                        <div className="text-center space-y-2">
-                             <div className="text-6xl font-black text-white/10 tracking-tighter">READY</div>
-                             <div className="text-gray-400 font-mono text-sm">
+                        <div className="text-center space-y-4">
+                             <div className="text-7xl font-black text-white/5 tracking-tighter select-none">READY</div>
+                             <div className="text-bili-blue font-mono font-bold text-lg bg-blue-500/10 px-4 py-2 rounded-full border border-blue-500/20">
                                 POOL: {filteredComments.length} CANDIDATES
                              </div>
                         </div>
@@ -361,23 +370,24 @@ const App: React.FC = () => {
                    </div>
 
                    {/* Controls */}
-                   <div className="mt-12 relative z-10">
+                   <div className="mt-12 relative z-10 h-16">
                       {status === AppState.READY_TO_DRAW || status === AppState.FINISHED ? (
                         <button 
                           onClick={startLottery}
                           disabled={filteredComments.length === 0}
-                          className="group relative px-8 py-4 bg-gradient-to-r from-bili-pink to-pink-500 rounded-2xl text-white font-bold text-xl shadow-xl shadow-pink-200 hover:shadow-pink-300 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="group relative px-10 py-4 bg-gradient-to-r from-bili-pink to-pink-600 rounded-2xl text-white font-bold text-xl shadow-xl shadow-pink-200/50 hover:shadow-pink-300/50 hover:-translate-y-1 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                         >
                             <span className="flex items-center gap-3">
-                                {status === AppState.FINISHED ? <RotateCcw /> : <Play fill="currentColor" />}
+                                {status === AppState.FINISHED ? <RotateCcw className="w-6 h-6" /> : <Play className="w-6 h-6 fill-current" />}
                                 {status === AppState.FINISHED ? 'Restart Draw' : 'Start Lottery'}
                             </span>
                         </button>
                       ) : status === AppState.DRAWING && (
                         <button 
                           onClick={stopLottery}
-                          className="px-8 py-4 bg-white text-red-500 border-2 border-red-100 rounded-2xl font-bold text-xl shadow-xl hover:bg-red-50 hover:scale-105 transition-all"
+                          className="px-10 py-4 bg-white text-red-500 border-2 border-red-100 rounded-2xl font-bold text-xl shadow-xl hover:bg-red-50 hover:scale-105 hover:shadow-red-100 transition-all flex items-center gap-3"
                         >
+                            <div className="w-3 h-3 bg-red-500 rounded-full animate-ping"></div>
                             STOP!
                         </button>
                       )}
