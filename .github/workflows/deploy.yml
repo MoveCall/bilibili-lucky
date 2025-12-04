@@ -1,0 +1,7 @@
+# GitHub Actions Workflow Disabled
+#
+# Since you are using Vercel for deployment, this workflow is no longer needed.
+# Vercel will automatically run `npm run build` (which includes `npm run fetch-data`)
+# whenever you push to the repository.
+#
+# If you ever want to switch back to GitHub Pages, you can restore the content of this file.
