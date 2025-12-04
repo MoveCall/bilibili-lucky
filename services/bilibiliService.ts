@@ -15,7 +15,7 @@ export const fetchCommentsByBV = async (bvId: string, onLog: (msg: string) => vo
   onLog(`[Info] 解析成功: BV=${bvId} => OID=${oid}`);
 
   // 第二步：分页拉取评论
-  return await fetchCommentsByOid(oid, onLog);
+  return await fetchCommentsByOid(oid, bvId, onLog);
 };
 
 // 辅助：通过 BV 获取 OID (调用 /api/proxy?type=view)
@@ -36,17 +36,19 @@ async function fetchOidByBv(bvId: string, onLog: (msg: string) => void): Promise
 }
 
 // 辅助：通过 OID 拉取评论 (调用 /api/proxy?type=reply)
-async function fetchCommentsByOid(oid: string, onLog: (msg: string) => void): Promise<BilibiliComment[]> {
+async function fetchCommentsByOid(oid: string, bvId: string, onLog: (msg: string) => void): Promise<BilibiliComment[]> {
   let allComments: BilibiliComment[] = [];
   let page = 1;
   let totalPage = 1; 
   const MAX_PAGES = 50; 
-  
+  let emptyPageCount = 0; // 连续空页计数器
+
   while (page <= totalPage && page <= MAX_PAGES) {
     try {
       onLog(`[Fetch] 正在抓取第 ${page}/${page === 1 ? '?' : totalPage} 页...`);
       
-      const res = await fetch(`/api/proxy?type=reply&oid=${oid}&pn=${page}`);
+      // 将 bvid 也传过去，用于后端伪造 Referer
+      const res = await fetch(`/api/proxy?type=reply&oid=${oid}&bvid=${bvId}&pn=${page}`);
       if (!res.ok) throw new Error(`Proxy network error: ${res.status}`);
 
       const json = await res.json();
@@ -66,12 +68,20 @@ async function fetchCommentsByOid(oid: string, onLog: (msg: string) => void): Pr
         const replies = json.data.replies;
         if (replies && Array.isArray(replies) && replies.length > 0) {
           allComments = [...allComments, ...replies];
+          emptyPageCount = 0; // 重置空页计数
         } else {
-          // B站 API 有时在中间页返回空，但不一定是结束
+          // B站 API 有时在中间页返回空，如果不严重则继续
+          emptyPageCount++;
           if (page === 1) {
-             onLog(`[Warn] 第 1 页未返回数据`);
+             onLog(`[Warn] 第 1 页未返回数据 (可能触发了游客限制)`);
           } else {
              onLog(`[Warn] 第 ${page} 页无更多数据`);
+          }
+          
+          // 如果连续3页都空，且已经抓了一些数据，或者总页数还是1，就停止
+          if (emptyPageCount >= 3) {
+             onLog(`[Info] 连续多页为空，提前结束抓取`);
+             break;
           }
         }
       } else {
@@ -85,7 +95,7 @@ async function fetchCommentsByOid(oid: string, onLog: (msg: string) => void): Pr
     }
 
     page++;
-    // Vercel 位于海外，连接 B 站可能稍慢，稍微等待一下
+    // 简单的限流
     await new Promise(r => setTimeout(r, 500));
   }
 

@@ -5,13 +5,23 @@
 export default async function handler(req, res) {
   const { type, oid, bvid, pn = 1 } = req.query;
 
+  // 生成随机 buvid3 以模拟真实浏览器访问 (绕过部分游客限制)
+  const generateBuvid = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    }) + 'infoc';
+  };
+
   // 1. 伪造浏览器请求头
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://www.bilibili.com/',
+    'Referer': `https://www.bilibili.com/video/${bvid || ('av' + oid)}`,
     'Origin': 'https://www.bilibili.com',
     'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Cookie': `buvid3=${generateBuvid()};` // 关键：添加 Cookie
   };
 
   let targetUrl = '';
@@ -24,10 +34,10 @@ export default async function handler(req, res) {
   } else if (type === 'reply') {
     // 获取评论列表
     // sort=0: 按时间排序
-    // nohot=1: 不显示热评 (防止重复)
     // ps=20: 每页数量
+    // 注意：nohot=1 有时会导致第一页为空，这里暂时去掉，在前端去重即可
     if (!oid) return res.status(400).json({ code: -1, message: 'Missing oid' });
-    targetUrl = `https://api.bilibili.com/x/v2/reply?type=1&oid=${oid}&sort=0&nohot=1&ps=20&pn=${pn}`;
+    targetUrl = `https://api.bilibili.com/x/v2/reply?type=1&oid=${oid}&sort=0&ps=20&pn=${pn}`;
   } else {
     return res.status(400).json({ code: -1, message: 'Invalid type parameter' });
   }
