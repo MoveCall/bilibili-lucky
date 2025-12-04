@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, Trash2, Filter, AlertTriangle } from 'lucide-react';
+import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, AlertTriangle } from 'lucide-react';
 
 import { Input } from './components/Input';
 import { Button } from './components/Button';
