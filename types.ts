@@ -1,4 +1,5 @@
 export interface CommentUser {
+  commentId?: string;
   mid: string;
   uname: string;
   message: string;
@@ -28,21 +29,40 @@ export interface ReplyData {
   cursor: {
     is_end: boolean;
     next: number;
+    all_count?: number;
+    pagination_reply?: {
+      next_offset?: string;
+      prev_offset?: string;
+    };
   };
-  replies: Array<{
-    member: {
-      mid: string;
-      uname: string;
-      avatar: string;
-      level_info: {
-        current_level: number;
-      };
+  replies: BiliReplyItem[];
+}
+
+export interface SubReplyData {
+  page: {
+    count: number;
+    num: number;
+    size: number;
+  };
+  replies: BiliReplyItem[];
+}
+
+export interface BiliReplyItem {
+  rpid: number;
+  rcount?: number;
+  member: {
+    mid: string;
+    uname: string;
+    avatar: string;
+    level_info: {
+      current_level: number;
     };
-    content: {
-      message: string;
-    };
-    ctime: number;
-  }>;
+  };
+  content: {
+    message: string;
+  };
+  ctime: number;
+  replies?: BiliReplyItem[];
 }
 
 export interface LogEntry {

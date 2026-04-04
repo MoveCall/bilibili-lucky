@@ -1,20 +1,53 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Bilibili Lucky Draw
 
-# Run and deploy your AI Studio app
+一个用于 B 站评论抽奖的前端工具，支持两种数据来源：
 
-This contains everything you need to run your app locally.
+- 在线抓取：输入 `BV` 号或完整视频链接，通过本地/服务端代理抓取视频评论
 
-View your app in AI Studio: https://ai.studio/apps/drive/1wm2sCNza8ddS2JRbUurAJPTU1iH7oNiH
+当前版本已支持：
 
-## Run Locally
+- 自动解析 `BV` 号
+- 抓取主评论
+- 抓取楼中楼评论
+- 按关键词、用户等级过滤
+- 按用户 UID 去重
+- 随机滚动抽奖与结果展示
 
-**Prerequisites:**  Node.js
+## 本地运行
 
+前置条件：
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- Node.js 18+
+
+启动步骤：
+
+1. 安装依赖：`npm install`
+2. 可选：复制 `.env.example` 为 `.env.local`，填入 `BILIBILI_COOKIE`
+3. 启动开发环境：`npm run dev`
+
+开发模式下，Vite 会直接提供 `/api/proxy`，不再依赖额外的本地后端服务。
+
+## Cookie 配置
+
+为了提高评论抓取完整度，服务端代理支持读取环境变量 `BILIBILI_COOKIE`。
+
+- 配置了 `BILIBILI_COOKIE`：用户前端可以不登录，服务端仍会带默认登录态去请求 B 站接口
+- 不配置 `BILIBILI_COOKIE`：项目会退回匿名模式，仍可使用，但部分视频可能只能抓到少量评论
+
+建议：
+
+- 单独准备一个 B 站小号 Cookie 用于抓取
+- 定期检查 Cookie 是否失效
+- 不要在前端暴露 Cookie
+
+## 构建
+
+执行：
+
+`npm run build`
+
+## 说明
+
+- 在线抓取依赖 B 站公开接口，接口风控或返回结构变化时可能需要调整代理参数。
+- 当前项目已支持默认 Cookie 模式和匿名模式；匿名模式下，页面会主动提示“结果可能不完整”。
+- 如果你已经有自己的评论导出结果，也可以直接切到 JSON 模式导入。

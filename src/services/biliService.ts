@@ -1,133 +1,224 @@
-import { CommentUser, VideoInfo, ReplyData, BiliApiResponse } from '../../types';
+import {
+  BiliApiResponse,
+  BiliReplyItem,
+  CommentUser,
+  ReplyData,
+  SubReplyData,
+  VideoInfo
+} from '../../types';
 
-// --- MOCK DATA FOR FALLBACK (演示模式数据) ---
-const MOCK_OID = 999999;
+const SUB_REPLY_PAGE_SIZE = 20;
+const ROOT_COMMENT_BATCH_SIZE = 20;
 
-const MOCK_VIDEO_INFO: VideoInfo = {
-  aid: MOCK_OID,
-  bvid: 'BV1MockDemo',
-  title: '【演示模式】后端未连接 - 自动启用模拟数据',
-  pic: 'https://images.unsplash.com/photo-1626544827763-d516dce335ca?q=80&w=800&auto=format&fit=crop',
-  owner: {
-    name: 'Vercel 演示账号',
-    face: 'https://api.dicebear.com/7.x/avataaars/svg?seed=vercel'
+export interface ProxyStatus {
+  hasConfiguredCookie: boolean;
+}
+
+export interface CommentFetchResult {
+  comments: CommentUser[];
+  rootCountEstimate: number;
+  usedConfiguredCookie: boolean;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeAssetUrl(url: string | undefined) {
+  if (!url) {
+    return 'https://i0.hdslb.com/bfs/face/member/noface.jpg';
   }
-};
 
-const MOCK_COMMENTS: CommentUser[] = Array.from({ length: 30 }).map((_, i) => ({
-  mid: `mock_${i}`,
-  uname: `测试用户_${i + 1}`,
-  message: `这是一个模拟评论 #${i + 1}。当前后端 API 不可用 (404)，系统已自动切换到演示模式。祝大家代码无 Bug！`,
-  avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${i}`,
-  ctime: Date.now() / 1000 - i * 3600,
-  level: Math.floor(Math.random() * 7) // Random level 0-6
-}));
+  if (url.startsWith('//')) {
+    return `https:${url}`;
+  }
 
-// --- HELPER ---
+  if (url.startsWith('http://')) {
+    return url.replace('http://', 'https://');
+  }
+
+  return url;
+}
 
 async function fetchJson<T>(url: string): Promise<T> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-       // Identify 404 specifically for fallback logic
-       if (res.status === 404) throw new Error("API_NOT_FOUND");
-       throw new Error(`HTTP Error: ${res.status} ${res.statusText}`);
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`请求失败: ${response.status} ${response.statusText}`);
+  }
+
+  const payload = await response.json();
+
+  if (payload?.code === -1 && payload?.message) {
+    throw new Error(payload.message);
+  }
+
+  return payload as T;
+}
+
+export async function getProxyStatus(): Promise<ProxyStatus> {
+  const json = await fetchJson<BiliApiResponse<ProxyStatus>>('/api/proxy?type=status');
+  if (json.code !== 0 || !json.data) {
+    throw new Error(json.message || '无法获取代理状态');
+  }
+
+  return json.data;
+}
+
+function toCommentUser(reply: BiliReplyItem): CommentUser {
+  return {
+    commentId: String(reply.rpid),
+    mid: reply.member?.mid ?? '',
+    uname: reply.member?.uname ?? '匿名用户',
+    message: reply.content?.message ?? '',
+    avatar: normalizeAssetUrl(reply.member?.avatar),
+    ctime: reply.ctime,
+    level: reply.member?.level_info?.current_level ?? 0
+  };
+}
+
+function appendUniqueComments(target: Map<string, CommentUser>, comments: CommentUser[]) {
+  for (const comment of comments) {
+    if (!comment.message) {
+      continue;
     }
-    const text = await res.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new Error("Invalid JSON response");
+
+    const key = comment.commentId || `${comment.mid}:${comment.ctime}:${comment.message}`;
+    if (!target.has(key)) {
+      target.set(key, comment);
     }
-  } catch (e: any) {
-    throw e;
   }
 }
 
-// --- API METHODS ---
+async function getSubReplies(oid: number, root: number): Promise<CommentUser[]> {
+  const commentsById = new Map<string, CommentUser>();
+  let page = 1;
+  let totalPages = 1;
 
-export async function getVideoInfo(bv: string): Promise<VideoInfo> {
-  try {
-    const json = await fetchJson<BiliApiResponse<VideoInfo>>(`/api/proxy?type=view&bvid=${bv}`);
-    if (json.code === 0 && json.data?.aid) {
-      return json.data; 
+  while (page <= totalPages) {
+    const params = new URLSearchParams({
+      type: 'subReply',
+      oid: String(oid),
+      root: String(root),
+      pn: String(page),
+      ps: String(SUB_REPLY_PAGE_SIZE)
+    });
+
+    const json = await fetchJson<BiliApiResponse<SubReplyData>>(`/api/proxy?${params.toString()}`);
+    if (json.code !== 0) {
+      throw new Error(json.message || '获取子评论失败');
     }
-    throw new Error(json.message || "未找到该视频信息");
-  } catch (err: any) {
-    // Fallback to mock data if API is missing (404) or Network Fail
-    if (err.message === "API_NOT_FOUND" || err.message.includes("Failed to fetch")) {
-      console.warn("后端 API 不可用，切换至模拟数据模式。");
-      return MOCK_VIDEO_INFO;
+
+    const replies = json.data?.replies ?? [];
+    appendUniqueComments(commentsById, replies.map(toCommentUser));
+
+    const count = json.data?.page?.count ?? replies.length;
+    totalPages = Math.max(1, Math.ceil(count / SUB_REPLY_PAGE_SIZE));
+    page += 1;
+
+    if (page <= totalPages) {
+      await sleep(120);
     }
-    throw err;
   }
+
+  return Array.from(commentsById.values());
+}
+
+export async function getVideoInfo(bvid: string): Promise<VideoInfo> {
+  const params = new URLSearchParams({
+    type: 'view',
+    bvid
+  });
+
+  const json = await fetchJson<BiliApiResponse<VideoInfo>>(`/api/proxy?${params.toString()}`);
+  if (json.code !== 0 || !json.data?.aid) {
+    throw new Error(json.message || '未找到该视频信息');
+  }
+
+  return json.data;
 }
 
 export async function getAllComments(
-  oid: number, 
+  oid: number,
   onProgress?: (count: number, page: number) => void
-): Promise<CommentUser[]> {
-  // 1. If we are using the mock OID, return mock comments directly
-  if (oid === MOCK_OID) {
-     if (onProgress) onProgress(MOCK_COMMENTS.length, 1);
-     await new Promise(resolve => setTimeout(resolve, 800)); // Simulate network delay
-     return MOCK_COMMENTS;
-  }
-
-  // 2. Real API fetch
-  let allComments: CommentUser[] = [];
+): Promise<CommentFetchResult> {
+  const commentsById = new Map<string, CommentUser>();
+  let next = 0;
+  let paginationOffset = '';
   let page = 1;
-  let isEnd = false;
+  let hasMore = true;
+  let rootCountEstimate = 0;
+  const proxyStatus = await getProxyStatus();
 
-  try {
-    while (!isEnd) {
-      const json = await fetchJson<BiliApiResponse<ReplyData>>(`/api/proxy?type=reply&oid=${oid}&next=${page}`);
+  while (hasMore) {
+    const params = new URLSearchParams({
+      type: 'reply',
+      mode: '2',
+      oid: String(oid),
+      plat: '1',
+      web_location: '1315875'
+    });
 
-      if (json.code !== 0) {
-        console.warn(`第 ${page} 页获取失败: ${json.message}`);
-        break;
-      }
-
-      const replies = json.data?.replies;
-      const cursor = json.data?.cursor;
-
-      if (replies && replies.length > 0) {
-        const formatted: CommentUser[] = replies.map((r) => ({
-          mid: r.member.mid,
-          uname: r.member.uname,
-          message: r.content.message,
-          avatar: r.member.avatar,
-          ctime: r.ctime,
-          level: r.member.level_info.current_level
-        }));
-        
-        allComments = [...allComments, ...formatted];
-        
-        if (onProgress) {
-          onProgress(allComments.length, page);
-        }
-      } else {
-        isEnd = true; 
-      }
-
-      if (cursor?.is_end) {
-        isEnd = true;
-      }
-
-      page++;
-      
-      // Gentle throttling
-      await new Promise(r => setTimeout(r, 200));
+    if (page === 1) {
+      params.set('seek_rpid', '');
+      params.set('next', '0');
+    } else {
+      params.set('next', String(next));
+      params.set('pagination_str', JSON.stringify({
+        offset: paginationOffset
+      }));
     }
-  } catch (err: any) {
-     // If API fails mid-way with 404, fallback
-     if (err.message === "API_NOT_FOUND") {
-       console.warn("抓取过程中后端断开，返回模拟数据。");
-       if (onProgress) onProgress(MOCK_COMMENTS.length, 1);
-       return MOCK_COMMENTS;
-     }
-     throw err;
+
+    const json = await fetchJson<BiliApiResponse<ReplyData>>(`/api/proxy?${params.toString()}`);
+    if (json.code !== 0) {
+      throw new Error(json.message || `第 ${page} 页评论获取失败`);
+    }
+
+    const replies = json.data?.replies ?? [];
+    if (replies.length === 0) {
+      break;
+    }
+
+    rootCountEstimate = Math.max(rootCountEstimate, json.data?.cursor?.all_count ?? replies.length);
+
+    for (const reply of replies) {
+      appendUniqueComments(commentsById, [toCommentUser(reply)]);
+
+      const previewReplies = (reply.replies ?? []).map(toCommentUser);
+      appendUniqueComments(commentsById, previewReplies);
+
+      const previewCount = previewReplies.length;
+      const totalSubReplyCount = reply.rcount ?? previewCount;
+      if (totalSubReplyCount > previewCount) {
+        const nestedReplies = await getSubReplies(oid, reply.rpid);
+        appendUniqueComments(commentsById, nestedReplies);
+      }
+    }
+
+    onProgress?.(commentsById.size, page);
+
+    const cursor = json.data?.cursor;
+    const nextOffset = cursor?.pagination_reply?.next_offset ?? '';
+    const nextCursor = cursor?.next ?? next;
+
+    const exhausted =
+      replies.length < ROOT_COMMENT_BATCH_SIZE ||
+      !nextOffset ||
+      nextCursor === next;
+
+    hasMore = !exhausted;
+    next = nextCursor;
+    paginationOffset = nextOffset;
+    page += 1;
+
+    if (hasMore) {
+      await sleep(180);
+    }
   }
 
-  return allComments;
+  return {
+    comments: Array.from(commentsById.values()).sort((a, b) => (a.ctime ?? 0) - (b.ctime ?? 0)),
+    rootCountEstimate,
+    usedConfiguredCookie: proxyStatus.hasConfiguredCookie
+  };
 }

@@ -1,23 +1,44 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
+import { createProxyPayload } from './server/biliProxy.js';
+
+function biliProxyDevPlugin() {
+  return {
+    name: 'bili-proxy-dev',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url) {
+          next();
+          return;
+        }
+
+        const requestUrl = new URL(req.url, 'http://localhost');
+        if (requestUrl.pathname !== '/api/proxy') {
+          next();
+          return;
+        }
+
+        const payload = await createProxyPayload(Object.fromEntries(requestUrl.searchParams.entries()));
+        res.statusCode = payload.status;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(payload.body));
+      });
+    }
+  };
+}
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url))
-    }
-  },
-  server: {
-    proxy: {
-      // Proxy /api requests to localhost:3000 (standard Vercel dev port)
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-        secure: false,
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  process.env.BILIBILI_COOKIE = env.BILIBILI_COOKIE || process.env.BILIBILI_COOKIE;
+
+  return {
+    plugins: [react(), biliProxyDevPlugin()],
+    resolve: {
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url))
       }
     }
-  }
+  };
 });

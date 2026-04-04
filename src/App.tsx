@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, AlertTriangle, FileJson, Info } from 'lucide-react';
+import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, AlertTriangle } from 'lucide-react';
 
 import { Input } from './components/Input';
 import { Button } from './components/Button';
@@ -19,80 +19,94 @@ enum AppState {
 }
 
 const App: React.FC = () => {
-  // --- State ---
-  const [inputMode, setInputMode] = useState<'online' | 'json'>('online');
-  const [bvId, setBvId] = useState('BV1gC4y1h71A'); // Default for demo
-  const [jsonInput, setJsonInput] = useState('');
-  
+  const [bvId, setBvId] = useState('BV13vuEzyEGp');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [allComments, setAllComments] = useState<CommentUser[]>([]);
   const [filteredComments, setFilteredComments] = useState<CommentUser[]>([]);
-  
   const [status, setStatus] = useState<AppState>(AppState.IDLE);
-  const [isMockMode, setIsMockMode] = useState(false);
-  
-  // Filters
+  const [isAnonymousMode, setIsAnonymousMode] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [removeDuplicates, setRemoveDuplicates] = useState(true);
   const [minLevel, setMinLevel] = useState(1);
-
-  // Lottery
+  const [winnerCount, setWinnerCount] = useState(1);
   const [currentCandidate, setCurrentCandidate] = useState<CommentUser | null>(null);
   const [winner, setWinner] = useState<CommentUser | null>(null);
+  const [winners, setWinners] = useState<CommentUser[]>([]);
   const timerRef = useRef<number | null>(null);
 
-  // --- Helpers ---
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const entry: LogEntry = {
       id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toLocaleTimeString('zh-CN', { hour12: false }), // 14:04:05 format
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
       type,
       message
     };
-    setLogs(prev => [...prev, entry]);
+    setLogs((prev) => [...prev, entry]);
   };
 
-  // --- Actions ---
-  const handleFetch = async () => {
-    if (!bvId) {
-      addLog('请输入有效的 BV 号', 'error');
-      return;
-    }
-    
-    setLogs([]); // Clear previous logs
-    setStatus(AppState.FETCHING_INFO);
+  const resetSession = () => {
     setVideoInfo(null);
     setAllComments([]);
     setFilteredComments([]);
+    setCurrentCandidate(null);
     setWinner(null);
-    setIsMockMode(false);
+    setWinners([]);
+    setIsAnonymousMode(false);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const normalizeBvid = (raw: string) => {
+    const value = raw.trim();
+    if (!value) {
+      return null;
+    }
+
+    const match = value.match(/BV([0-9A-Za-z]{10})/i);
+    if (match) {
+      return `BV${match[1]}`;
+    }
+
+    if (/^[0-9A-Za-z]{10}$/i.test(value)) {
+      return `BV${value}`;
+    }
+
+    return null;
+  };
+
+  const handleFetch = async () => {
+    const normalizedBvid = normalizeBvid(bvId);
+    if (!normalizedBvid) {
+      addLog('请输入有效的 BV 号或完整视频链接', 'error');
+      return;
+    }
+
+    setLogs([]);
+    setStatus(AppState.FETCHING_INFO);
+    resetSession();
 
     try {
-      addLog(`正在解析视频: ${bvId}...`, 'info');
-      
-      // 1. Get Info
-      const info = await getVideoInfo(bvId);
+      setBvId(normalizedBvid);
+      addLog(`正在解析视频: ${normalizedBvid}...`, 'info');
+
+      const info = await getVideoInfo(normalizedBvid);
       setVideoInfo(info);
-      
-      // Check if we fell back to mock data (OID 999999 is our magic number)
-      if (info.aid === 999999) {
-          setIsMockMode(true);
-          addLog('⚠️ API 无法连接 (404)。已切换至演示模式。', 'warning');
-          addLog(`虚拟视频已加载: ${info.title}`, 'success');
-      } else {
-          addLog(`解析成功: BV=${info.bvid} => OID=${info.aid}`, 'success');
-      }
-      
-      // 2. Get Comments
+      addLog(`解析成功: BV=${info.bvid} => OID=${info.aid}`, 'success');
+
       setStatus(AppState.FETCHING_COMMENTS);
-      addLog('开始抓取评论数据...', 'info');
-      
-      const comments = await getAllComments(info.aid, (count, page) => {
-        if (page % 5 === 0 || page === 1) { 
-            addLog(`已抓取第 ${page} 页，累计 ${count} 条评论...`, 'info');
+      addLog('开始抓取评论数据，包含楼中楼...', 'info');
+
+      const result = await getAllComments(info.aid, (count, page) => {
+        if (page === 1 || page % 3 === 0) {
+          addLog(`已处理第 ${page} 批评论，累计 ${count} 条有效评论...`, 'info');
         }
       });
+
+      const comments = result.comments;
+      setIsAnonymousMode(!result.usedConfiguredCookie);
 
       if (comments.length === 0) {
         addLog('未找到评论或 API 返回空列表。', 'warning');
@@ -101,89 +115,20 @@ const App: React.FC = () => {
       }
 
       setAllComments(comments);
-      addLog(`抓取完成！共获取原始评论: ${comments.length} 条`, 'success');
+      addLog(`抓取完成，共获取 ${comments.length} 条有效评论`, 'success');
+
+      if (!result.usedConfiguredCookie) {
+        addLog('当前为匿名模式，B 站可能只返回部分评论。建议给服务端配置默认 Cookie。', 'warning');
+      }
+
+      if (result.rootCountEstimate > comments.length * 3) {
+        addLog(`接口报告评论规模约为 ${result.rootCountEstimate}，但当前仅抓到 ${comments.length} 条，结果可能不完整。`, 'warning');
+      }
+
       setStatus(AppState.READY_TO_DRAW);
-
-    } catch (err: any) {
-      console.error(err);
-      addLog(err.message || '未知错误', 'error');
-      setStatus(AppState.IDLE);
-    }
-  };
-
-  const handleJsonParse = () => {
-    if (!jsonInput.trim()) {
-      addLog('请先输入 JSON 数据', 'error');
-      return;
-    }
-
-    setLogs([]);
-    setStatus(AppState.FETCHING_INFO); // Reuse state for UI feedback
-    setVideoInfo(null);
-    setAllComments([]);
-    setFilteredComments([]);
-    setWinner(null);
-    setIsMockMode(false);
-
-    try {
-      addLog('正在解析 JSON 数据...', 'info');
-      
-      let parsed;
-      try {
-        parsed = JSON.parse(jsonInput);
-      } catch (e) {
-        throw new Error('JSON 格式错误，请检查语法');
-      }
-
-      let commentsRaw: any[] = [];
-      
-      // Attempt to auto-detect structure
-      if (Array.isArray(parsed)) {
-        commentsRaw = parsed;
-      } else if (parsed.data && Array.isArray(parsed.data.replies)) {
-        // Bilibili API structure
-        commentsRaw = parsed.data.replies;
-      } else if (parsed.replies && Array.isArray(parsed.replies)) {
-        commentsRaw = parsed.replies;
-      } else {
-        throw new Error('无法识别数据结构。请粘贴数组或包含 data.replies 的对象。');
-      }
-
-      // Map to standardized format
-      const formatted: CommentUser[] = commentsRaw.map((item: any, index: number) => {
-        // Handle standard API structure vs simplified structure
-        const mid = item.mid || item.member?.mid || `json_user_${index}`;
-        const uname = item.uname || item.member?.uname || `用户 ${mid}`;
-        const message = item.message || item.content?.message || '';
-        const avatar = item.avatar || item.member?.avatar || 'https://i0.hdslb.com/bfs/face/member/noface.jpg';
-        const level = item.level ?? item.member?.level_info?.current_level ?? 0;
-
-        if (!message) {
-           console.warn('Skipping item with no message:', item);
-        }
-
-        return { mid, uname, message, avatar, level };
-      }).filter(c => c.message); // Filter out empty messages
-
-      if (formatted.length === 0) {
-        throw new Error('解析成功，但未找到有效评论数据。');
-      }
-
-      // Set Mock Video Info for display
-      setVideoInfo({
-        aid: 0,
-        bvid: 'JSON_IMPORT',
-        title: '【手动导入】本地 JSON 数据源',
-        pic: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=800&auto=format&fit=crop',
-        owner: { name: 'Local Import', face: '' }
-      });
-
-      setAllComments(formatted);
-      addLog(`解析成功！共导入 ${formatted.length} 条评论`, 'success');
-      setStatus(AppState.READY_TO_DRAW);
-
-    } catch (err: any) {
-      addLog(err.message, 'error');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '未知错误';
+      addLog(message, 'error');
       setStatus(AppState.IDLE);
     }
   };
@@ -191,24 +136,29 @@ const App: React.FC = () => {
   const applyFilters = () => {
     let result = [...allComments];
 
-    // Level Filter
     if (minLevel > 0) {
-        result = result.filter(c => c.level >= minLevel);
+      result = result.filter((comment) => comment.level >= minLevel);
     }
 
-    // Keyword
     if (keyword.trim()) {
-      result = result.filter(c => c.message.includes(keyword.trim()));
+      result = result.filter((comment) => comment.message.includes(keyword.trim()));
     }
 
-    // Dedupe
     if (removeDuplicates) {
-      const seen = new Set();
-      result = result.filter(c => {
-        if (seen.has(c.mid)) return false;
-        seen.add(c.mid);
+      const seen = new Set<string>();
+      result = result.filter((comment) => {
+        if (seen.has(comment.mid)) {
+          return false;
+        }
+
+        seen.add(comment.mid);
         return true;
       });
+    }
+
+    if (winners.length > 0) {
+      const winnerIds = new Set(winners.map((winnerItem) => winnerItem.mid));
+      result = result.filter((comment) => !winnerIds.has(comment.mid));
     }
 
     setFilteredComments(result);
@@ -216,14 +166,31 @@ const App: React.FC = () => {
 
   useEffect(() => {
     applyFilters();
-  }, [allComments, keyword, removeDuplicates, minLevel]);
+  }, [allComments, keyword, removeDuplicates, minLevel, winners]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
 
   const startLottery = () => {
-    if (filteredComments.length === 0) return;
+    if (filteredComments.length === 0) {
+      addLog('当前没有符合条件的候选人', 'warning');
+      return;
+    }
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
     setStatus(AppState.DRAWING);
     setWinner(null);
-    addLog(`开始从 ${filteredComments.length} 位候选人中抽取...`, 'info');
-    
+    setCurrentCandidate(filteredComments[0]);
+    addLog(`开始从 ${filteredComments.length} 位候选人中抽取第 ${winners.length + 1} / ${winnerCount} 位中奖者...`, 'info');
+
     const interval = window.setInterval(() => {
       const randomIndex = Math.floor(Math.random() * filteredComments.length);
       setCurrentCandidate(filteredComments[randomIndex]);
@@ -237,12 +204,59 @@ const App: React.FC = () => {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    if (currentCandidate) {
-      setWinner(currentCandidate);
-      setStatus(AppState.FINISHED);
-      addLog(`🎉 中奖者产生: ${currentCandidate.uname}`, 'success');
-      fireConfetti();
+
+    const finalCandidate = currentCandidate ?? filteredComments[Math.floor(Math.random() * filteredComments.length)];
+    if (!finalCandidate) {
+      addLog('未能确定中奖者，请重新抽奖', 'error');
+      setStatus(AppState.READY_TO_DRAW);
+      return;
     }
+
+    const nextWinners = [...winners, finalCandidate];
+    setWinners(nextWinners);
+    setWinner(finalCandidate);
+    setCurrentCandidate(finalCandidate);
+    setStatus(nextWinners.length >= winnerCount ? AppState.FINISHED : AppState.READY_TO_DRAW);
+    addLog(`中奖者产生: ${finalCandidate.uname}（第 ${nextWinners.length} / ${winnerCount} 位）`, 'success');
+    fireConfetti();
+  };
+
+  const exportResults = () => {
+    if (!videoInfo || winners.length === 0) {
+      addLog('暂无可导出的抽奖结果', 'warning');
+      return;
+    }
+
+    const exportPayload = {
+      exportedAt: new Date().toISOString(),
+      video: {
+        bvid: videoInfo.bvid,
+        aid: videoInfo.aid,
+        title: videoInfo.title
+      },
+      filters: {
+        keyword,
+        removeDuplicates,
+        minLevel
+      },
+      summary: {
+        totalComments: allComments.length,
+        eligibleCandidates: winners.length + filteredComments.length,
+        winnerCount: winners.length
+      },
+      winners
+    };
+
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${videoInfo.bvid || 'lottery'}-results.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addLog(`已导出 ${winners.length} 位中奖者结果`, 'success');
   };
 
   const fireConfetti = () => {
@@ -270,9 +284,9 @@ const App: React.FC = () => {
               Bilibili <span className="text-bili-pink">Lucky Draw</span> Pro
             </h1>
           </div>
-          <div className={`flex items-center gap-2 text-sm font-medium px-3 py-1 rounded-full border ${isMockMode ? 'text-orange-600 bg-orange-50 border-orange-100' : 'text-green-600 bg-green-50 border-green-100'}`}>
-            {isMockMode ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-            {isMockMode ? '演示模式 (Mock)' : '纯净版 (Vercel)'}
+          <div className={`flex items-center gap-2 text-sm font-medium px-3 py-1 rounded-full border ${isAnonymousMode ? 'text-orange-600 bg-orange-50 border-orange-100' : 'text-green-600 bg-green-50 border-green-100'}`}>
+            {isAnonymousMode ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+            {isAnonymousMode ? '在线匿名模式' : '在线抓取模式'}
           </div>
         </div>
       </nav>
@@ -293,78 +307,32 @@ const App: React.FC = () => {
               </div>
               
               <div className="p-5 flex flex-col gap-4">
-                {/* Tabs */}
-                <div className="flex bg-gray-100 p-1 rounded-xl mb-2">
-                  <button 
-                    onClick={() => setInputMode('online')}
-                    className={`flex-1 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition-all ${inputMode === 'online' ? 'bg-white shadow-sm text-bili-pink' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    <CloudLightning className="w-4 h-4" /> 在线获取
-                  </button>
-                  <button 
-                    onClick={() => setInputMode('json')}
-                    className={`flex-1 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition-all ${inputMode === 'json' ? 'bg-white shadow-sm text-bili-blue' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    <FileJson className="w-4 h-4" /> 粘贴 JSON
-                  </button>
+                <div className="inline-flex items-center gap-2 self-start rounded-full bg-pink-50 px-3 py-1 text-sm font-semibold text-bili-pink">
+                  <CloudLightning className="w-4 h-4" />
+                  在线获取
                 </div>
 
-                {inputMode === 'online' ? (
-                  <>
-                    <div className="space-y-3">
-                      <label className="text-sm font-semibold text-gray-700">Bilibili BV 号</label>
-                      <div className="flex gap-2">
-                        <span className="flex items-center justify-center px-3 bg-gray-100 text-gray-500 font-bold rounded-xl border border-gray-200">BV</span>
-                        <input 
-                          className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-bili-pink focus:ring-2 focus:ring-bili-pink/20 outline-none font-medium text-gray-700"
-                          placeholder="例如: 1gpSFBGE2s"
-                          value={bvId}
-                          onChange={e => setBvId(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="bg-blue-50 text-blue-700 text-xs p-3 rounded-lg flex items-start gap-2 leading-relaxed">
-                      <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      通过 Vercel 云端代理加速，稳定绕过 B 站风控，保护 IP 隐私。
-                    </div>
-                    <Button 
-                      onClick={handleFetch} 
-                      isLoading={status === AppState.FETCHING_INFO || status === AppState.FETCHING_COMMENTS}
-                      className="w-full shadow-lg shadow-pink-200"
-                    >
-                      {status === AppState.FETCHING_INFO ? '正在解析视频...' : 
-                       status === AppState.FETCHING_COMMENTS ? '正在抓取评论...' : '加载评论数据'}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                     <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <label className="text-sm font-semibold text-gray-700">JSON 数据</label>
-                        <a href="#" className="text-xs text-bili-blue hover:underline flex items-center gap-1" onClick={(e) => { e.preventDefault(); alert('格式支持：\n1. B站 API 原生响应 (data.replies)\n2. 简单对象数组 [{ uname: "名字", message: "内容" }]'); }}>
-                          <Info className="w-3 h-3" /> 格式说明
-                        </a>
-                      </div>
-                      <textarea 
-                        className="w-full h-32 px-4 py-3 rounded-xl border border-gray-200 focus:border-bili-blue focus:ring-2 focus:ring-bili-blue/20 outline-none font-mono text-xs text-gray-600 resize-none"
-                        placeholder={'[{"uname":"张三", "message":"求中奖", "avatar":"..."}]'}
-                        value={jsonInput}
-                        onChange={e => setJsonInput(e.target.value)}
-                      />
-                    </div>
-                     <div className="bg-yellow-50 text-yellow-700 text-xs p-3 rounded-lg flex items-start gap-2 leading-relaxed">
-                      <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      手动模式：适用于 API 故障或测试。请确保 JSON 格式正确。
-                    </div>
-                    <Button 
-                      variant="secondary"
-                      onClick={handleJsonParse} 
-                      className="w-full shadow-lg shadow-blue-200"
-                    >
-                      解析 JSON 数据
-                    </Button>
-                  </>
-                )}
+                <div className="space-y-3">
+                  <label className="text-sm font-semibold text-gray-700">Bilibili BV 号或视频链接</label>
+                  <input
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-bili-pink focus:ring-2 focus:ring-bili-pink/20 outline-none font-medium text-gray-700"
+                    placeholder="例如: BV1xx411c7mD 或完整视频链接"
+                    value={bvId}
+                    onChange={(e) => setBvId(e.target.value)}
+                  />
+                </div>
+                <div className="bg-blue-50 text-blue-700 text-xs p-3 rounded-lg flex items-start gap-2 leading-relaxed">
+                  <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  开发环境直接走本地代理，部署后走服务端接口。若服务端未配置默认 Cookie，将进入匿名模式，评论结果可能不完整。
+                </div>
+                <Button 
+                  onClick={handleFetch} 
+                  isLoading={status === AppState.FETCHING_INFO || status === AppState.FETCHING_COMMENTS}
+                  className="w-full shadow-lg shadow-pink-200"
+                >
+                  {status === AppState.FETCHING_INFO ? '正在解析视频...' : 
+                   status === AppState.FETCHING_COMMENTS ? '正在抓取评论...' : '加载评论数据'}
+                </Button>
 
                 {/* Log Area */}
                 <div className="mt-2">
@@ -385,6 +353,21 @@ const App: React.FC = () => {
                 </h2>
               </div>
               <div className="p-5 space-y-5">
+                <div>
+                   <label className="text-sm font-semibold text-gray-700 mb-2 block">中奖人数</label>
+                   <select
+                      value={winnerCount}
+                      onChange={e => setWinnerCount(Number(e.target.value))}
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 outline-none bg-white text-sm focus:border-bili-pink"
+                   >
+                      <option value="1">1 人</option>
+                      <option value="2">2 人</option>
+                      <option value="3">3 人</option>
+                      <option value="5">5 人</option>
+                      <option value="10">10 人</option>
+                   </select>
+                </div>
+
                 
                 <div>
                    <label className="text-sm font-semibold text-gray-700 mb-2 block">筛选关键词 (选填)</label>
@@ -421,6 +404,15 @@ const App: React.FC = () => {
                    </select>
                 </div>
 
+                <Button
+                  variant="outline"
+                  onClick={exportResults}
+                  disabled={winners.length === 0}
+                  className="w-full"
+                >
+                  导出抽奖结果
+                </Button>
+
               </div>
             </div>
 
@@ -431,8 +423,8 @@ const App: React.FC = () => {
              <div className="bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden min-h-[600px] flex flex-col">
                 <div className="p-6 border-b border-gray-100 flex items-center gap-3">
                    <MonitorPlay className="w-6 h-6 text-gray-700" />
-                   <h2 className="text-xl font-bold text-gray-800">抽奖大屏</h2>
-                   {videoInfo && (
+                  <h2 className="text-xl font-bold text-gray-800">抽奖大屏</h2>
+                  {videoInfo && (
                       <span className="ml-auto text-sm text-gray-500 truncate max-w-[200px] bg-gray-100 px-3 py-1 rounded-full">
                         {videoInfo.title}
                       </span>
@@ -471,7 +463,7 @@ const App: React.FC = () => {
                               <div className="scale-125 transform transition-all duration-500">
                                   <CommentCard user={winner} isWinner className="shadow-[0_0_60px_rgba(251,114,153,0.6)] ring-4 ring-yellow-400" />
                               </div>
-                              <p className="mt-8 text-white/80 font-bold tracking-widest uppercase text-sm">中奖者已产生</p>
+                              <p className="mt-8 text-white/80 font-bold tracking-widest uppercase text-sm">已抽出 {winners.length} / {winnerCount} 位中奖者</p>
                           </div>
                       ) : (
                         // Ready State
@@ -480,6 +472,9 @@ const App: React.FC = () => {
                              <div className="text-bili-blue font-mono font-bold text-lg bg-blue-500/10 px-4 py-2 rounded-full border border-blue-500/20">
                                 奖池：{filteredComments.length} 位候选人
                              </div>
+                             {winners.length > 0 && (
+                               <div className="text-sm text-white/60">已锁定 {winners.length} 位中奖者</div>
+                             )}
                         </div>
                       )}
 
@@ -490,12 +485,12 @@ const App: React.FC = () => {
                       {status === AppState.READY_TO_DRAW || status === AppState.FINISHED ? (
                         <button 
                           onClick={startLottery}
-                          disabled={filteredComments.length === 0}
+                          disabled={filteredComments.length === 0 || winners.length >= winnerCount}
                           className="group relative px-10 py-4 bg-gradient-to-r from-bili-pink to-pink-600 rounded-2xl text-white font-bold text-xl shadow-xl shadow-pink-200/50 hover:shadow-pink-300/50 hover:-translate-y-1 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                         >
                             <span className="flex items-center gap-3">
-                                {status === AppState.FINISHED ? <RotateCcw className="w-6 h-6" /> : <Play className="w-6 h-6 fill-current" />}
-                                {status === AppState.FINISHED ? '重新抽奖' : '开始抽奖'}
+                                {winners.length > 0 ? <RotateCcw className="w-6 h-6" /> : <Play className="w-6 h-6 fill-current" />}
+                                {winners.length >= winnerCount ? '已完成抽奖' : winners.length > 0 ? '继续抽奖' : '开始抽奖'}
                             </span>
                         </button>
                       ) : status === AppState.DRAWING && (
@@ -510,6 +505,25 @@ const App: React.FC = () => {
                    </div>
 
                 </div>
+
+                {winners.length > 0 && (
+                  <div className="relative z-10 mt-8 w-full max-w-2xl">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-gray-500">中奖名单</h3>
+                      <span className="text-sm text-gray-500">{winners.length} / {winnerCount}</span>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {winners.map((winnerItem, index) => (
+                        <CommentCard
+                          key={`${winnerItem.mid}-${index}`}
+                          user={winnerItem}
+                          isWinner
+                          className="bg-white"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
              </div>
           </div>
 
