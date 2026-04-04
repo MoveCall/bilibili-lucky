@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [filteredComments, setFilteredComments] = useState<CommentUser[]>([]);
   const [status, setStatus] = useState<AppState>(AppState.IDLE);
   const [isAnonymousMode, setIsAnonymousMode] = useState(false);
+  const [isLogExpanded, setIsLogExpanded] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [removeDuplicates, setRemoveDuplicates] = useState(true);
   const [minLevel, setMinLevel] = useState(1);
@@ -43,6 +44,12 @@ const App: React.FC = () => {
       message
     };
     setLogs((prev) => [...prev, entry]);
+  };
+
+  const formatDrawTime = () => {
+    return new Date().toLocaleString('zh-CN', {
+      hour12: false
+    });
   };
 
   const resetSession = () => {
@@ -212,12 +219,16 @@ const App: React.FC = () => {
       return;
     }
 
-    const nextWinners = [...winners, finalCandidate];
+    const finalWinner = {
+      ...finalCandidate,
+      drawTime: formatDrawTime()
+    };
+    const nextWinners = [...winners, finalWinner];
     setWinners(nextWinners);
-    setWinner(finalCandidate);
-    setCurrentCandidate(finalCandidate);
+    setWinner(finalWinner);
+    setCurrentCandidate(finalWinner);
     setStatus(nextWinners.length >= winnerCount ? AppState.FINISHED : AppState.READY_TO_DRAW);
-    addLog(`中奖者产生: ${finalCandidate.uname}（第 ${nextWinners.length} / ${winnerCount} 位）`, 'success');
+    addLog(`中奖者产生: ${finalWinner.uname}（第 ${nextWinners.length} / ${winnerCount} 位）`, 'success');
     fireConfetti();
   };
 
@@ -268,6 +279,14 @@ const App: React.FC = () => {
     };
     frame();
   };
+
+  const stageStatusText =
+    status === AppState.FETCHING_INFO ? '解析视频信息中' :
+    status === AppState.FETCHING_COMMENTS ? '抓取评论中' :
+    status === AppState.DRAWING ? `正在抽取第 ${winners.length + 1} 位中奖者` :
+    status === AppState.FINISHED ? '抽奖结果已锁定' :
+    filteredComments.length > 0 ? '候选池已就绪' :
+    '等待加载评论';
 
   // --- Render ---
   return (
@@ -336,10 +355,15 @@ const App: React.FC = () => {
 
                 {/* Log Area */}
                 <div className="mt-2">
-                  <div className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wider flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsLogExpanded((prev) => !prev)}
+                    className="mb-2 flex w-full items-center justify-between rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium uppercase tracking-wider text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-700"
+                  >
                     <span>&gt; 操作日志</span>
-                  </div>
-                  <Logger logs={logs} className="h-48" />
+                    <span>{isLogExpanded ? '收起' : `展开${logs.length > 0 ? ` (${logs.length})` : ''}`}</span>
+                  </button>
+                  {isLogExpanded && <Logger logs={logs} className="h-48" />}
                 </div>
               </div>
             </div>
@@ -420,110 +444,163 @@ const App: React.FC = () => {
 
           {/* === RIGHT COLUMN: Screen === */}
           <div className="w-full lg:w-2/3">
-             <div className="bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden min-h-[600px] flex flex-col">
-                <div className="p-6 border-b border-gray-100 flex items-center gap-3">
-                   <MonitorPlay className="w-6 h-6 text-gray-700" />
-                  <h2 className="text-xl font-bold text-gray-800">抽奖大屏</h2>
-                  {videoInfo && (
-                      <span className="ml-auto text-sm text-gray-500 truncate max-w-[200px] bg-gray-100 px-3 py-1 rounded-full">
-                        {videoInfo.title}
-                      </span>
-                   )}
-                </div>
+             <div className="relative overflow-hidden rounded-[32px] border border-slate-200 bg-[radial-gradient(circle_at_top,#fff8fb_0%,#eef4ff_38%,#e7edf5_100%)] shadow-[0_30px_80px_rgba(15,23,42,0.12)] min-h-[600px]">
+                <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.58),rgba(255,255,255,0)_35%,rgba(255,255,255,0.6)_100%)]" />
+                <div className="absolute -left-16 top-12 h-56 w-56 rounded-full bg-pink-300/30 blur-3xl" />
+                <div className="absolute right-0 top-0 h-72 w-72 rounded-full bg-cyan-300/30 blur-3xl" />
+                <div className="absolute bottom-10 left-1/2 h-40 w-[85%] -translate-x-1/2 rounded-full bg-slate-900/10 blur-3xl" />
 
-                <div className="flex-1 p-8 bg-slate-50 relative flex flex-col items-center justify-center">
-                   
-                   {/* Background Grid Pattern */}
-                   <div className="absolute inset-0 opacity-5" 
-                        style={{backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', backgroundSize: '24px 24px'}}>
-                   </div>
-
-                   {/* Main Display Area */}
-                   <div className="relative z-10 w-full max-w-2xl aspect-video bg-[#1a1b2e] rounded-2xl shadow-2xl flex flex-col items-center justify-center overflow-hidden border-4 border-gray-800 ring-4 ring-gray-200/50">
-                      
-                      {status === AppState.IDLE || status === AppState.FETCHING_INFO || status === AppState.FETCHING_COMMENTS ? (
-                          <div className="text-center p-6 animate-pulse">
-                              <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-4 backdrop-blur-sm border border-white/10">
-                                  <Upload className="w-10 h-10 text-white/40" />
-                              </div>
-                              <p className="text-gray-400 font-medium">请先加载数据</p>
-                          </div>
-                      ) : status === AppState.DRAWING ? (
-                          <div className="w-full h-full flex items-center justify-center p-8 bg-[#1a1b2e]">
-                              {currentCandidate && (
-                                  <div className="scale-150 transform transition-all duration-75">
-                                      <CommentCard user={currentCandidate} className="bg-white/95 shadow-2xl border-2 border-bili-pink" />
-                                  </div>
-                              )}
-                          </div>
-                      ) : status === AppState.FINISHED && winner ? (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-pink-900/50 to-blue-900/50 relative">
-                              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-                              <div className="animate-bounce mb-8 text-5xl">👑</div>
-                              <div className="scale-125 transform transition-all duration-500">
-                                  <CommentCard user={winner} isWinner className="shadow-[0_0_60px_rgba(251,114,153,0.6)] ring-4 ring-yellow-400" />
-                              </div>
-                              <p className="mt-8 text-white/80 font-bold tracking-widest uppercase text-sm">已抽出 {winners.length} / {winnerCount} 位中奖者</p>
-                          </div>
-                      ) : (
-                        // Ready State
-                        <div className="text-center space-y-4">
-                             <div className="text-7xl font-black text-white/5 tracking-tighter select-none">READY</div>
-                             <div className="text-bili-blue font-mono font-bold text-lg bg-blue-500/10 px-4 py-2 rounded-full border border-blue-500/20">
-                                奖池：{filteredComments.length} 位候选人
-                             </div>
-                             {winners.length > 0 && (
-                               <div className="text-sm text-white/60">已锁定 {winners.length} 位中奖者</div>
-                             )}
-                        </div>
-                      )}
-
-                   </div>
-
-                   {/* Controls */}
-                   <div className="mt-12 relative z-10 h-16">
-                      {status === AppState.READY_TO_DRAW || status === AppState.FINISHED ? (
-                        <button 
-                          onClick={startLottery}
-                          disabled={filteredComments.length === 0 || winners.length >= winnerCount}
-                          className="group relative px-10 py-4 bg-gradient-to-r from-bili-pink to-pink-600 rounded-2xl text-white font-bold text-xl shadow-xl shadow-pink-200/50 hover:shadow-pink-300/50 hover:-translate-y-1 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                        >
-                            <span className="flex items-center gap-3">
-                                {winners.length > 0 ? <RotateCcw className="w-6 h-6" /> : <Play className="w-6 h-6 fill-current" />}
-                                {winners.length >= winnerCount ? '已完成抽奖' : winners.length > 0 ? '继续抽奖' : '开始抽奖'}
-                            </span>
-                        </button>
-                      ) : status === AppState.DRAWING && (
-                        <button 
-                          onClick={stopLottery}
-                          className="px-10 py-4 bg-white text-red-500 border-2 border-red-100 rounded-2xl font-bold text-xl shadow-xl hover:bg-red-50 hover:scale-105 hover:shadow-red-100 transition-all flex items-center gap-3"
-                        >
-                            <div className="w-3 h-3 bg-red-500 rounded-full animate-ping"></div>
-                            停！
-                        </button>
-                      )}
-                   </div>
-
-                </div>
-
-                {winners.length > 0 && (
-                  <div className="relative z-10 mt-8 w-full max-w-2xl">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-gray-500">中奖名单</h3>
-                      <span className="text-sm text-gray-500">{winners.length} / {winnerCount}</span>
+                <div className="relative z-10 border-b border-white/60 px-6 py-5 backdrop-blur-sm">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-lg shadow-slate-900/20">
+                        <MonitorPlay className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-400">Live Stage</p>
+                        <h2 className="text-2xl font-black tracking-tight text-slate-900">抽奖大屏</h2>
+                      </div>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {winners.map((winnerItem, index) => (
-                        <CommentCard
-                          key={`${winnerItem.mid}-${index}`}
-                          user={winnerItem}
-                          isWinner
-                          className="bg-white"
-                        />
-                      ))}
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-white/70 bg-white/70 px-3 py-1 text-xs font-semibold text-slate-600 backdrop-blur">
+                        {stageStatusText}
+                      </span>
+                      <span className="rounded-full border border-white/70 bg-slate-900 px-3 py-1 text-xs font-semibold text-white shadow-lg shadow-slate-900/15">
+                        已抽出 {winners.length} / {winnerCount}
+                      </span>
                     </div>
                   </div>
-                )}
+                  {videoInfo && (
+                    <div className="mt-4 overflow-hidden rounded-2xl border border-white/70 bg-white/55 px-4 py-3 backdrop-blur">
+                      <div className="flex items-center gap-4 text-sm">
+                        <span className="shrink-0 rounded-full bg-bili-pink/10 px-3 py-1 font-bold text-bili-pink">当前视频</span>
+                        <span className="truncate font-medium text-slate-600">{videoInfo.title}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative z-10 p-6 md:p-8">
+                  <div className="relative overflow-hidden rounded-[28px] border border-white/50 bg-[#090d1a] p-5 shadow-[0_40px_100px_rgba(15,23,42,0.4)]">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.16),transparent_32%),radial-gradient(circle_at_20%_20%,rgba(251,114,153,0.22),transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/60 to-transparent" />
+                    <div className="absolute left-10 top-0 h-52 w-24 -skew-x-[22deg] bg-white/5 blur-2xl" />
+                    <div className="absolute right-12 top-0 h-52 w-24 skew-x-[22deg] bg-cyan-200/10 blur-2xl" />
+                    <div className="absolute inset-x-6 bottom-5 h-20 rounded-full bg-bili-pink/10 blur-3xl" />
+
+                    <div className="relative z-10 mb-5 flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white/75 backdrop-blur">
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-white/40">Draw Engine</p>
+                        <p className="mt-1 text-sm font-medium text-white/80">{stageStatusText}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[11px] uppercase tracking-[0.24em] text-white/35">Pool</p>
+                        <p className="mt-1 text-2xl font-black text-cyan-300">{filteredComments.length}</p>
+                      </div>
+                    </div>
+
+                    <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-[24px] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.22),rgba(9,13,26,0.96)_48%)]">
+                      <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px)', backgroundSize: '42px 42px' }} />
+                      <div className="absolute left-1/2 top-0 h-40 w-[70%] -translate-x-1/2 bg-gradient-to-b from-cyan-200/20 to-transparent blur-2xl" />
+                      <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black/35 to-transparent" />
+
+                      {status === AppState.IDLE || status === AppState.FETCHING_INFO || status === AppState.FETCHING_COMMENTS ? (
+                        <div className="relative z-10 text-center">
+                          <div className="mx-auto mb-5 flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/5 shadow-[0_0_50px_rgba(56,189,248,0.12)]">
+                            <Upload className="h-11 w-11 text-white/35" />
+                          </div>
+                          <p className="text-xs font-bold uppercase tracking-[0.35em] text-white/35">Stage Standby</p>
+                          <p className="mt-3 text-lg font-semibold text-white/75">{stageStatusText}</p>
+                        </div>
+                      ) : status === AppState.DRAWING ? (
+                        <div className="relative z-10 flex h-full w-full items-center justify-center p-8">
+                          {currentCandidate && (
+                            <div className="w-full max-w-xl scale-[1.18] transition-all duration-75">
+                              <CommentCard user={currentCandidate} className="border-2 border-bili-pink bg-white/95 shadow-[0_0_60px_rgba(251,114,153,0.25)]" />
+                            </div>
+                          )}
+                        </div>
+                      ) : status === AppState.FINISHED && winner ? (
+                        <div className="relative z-10 flex h-full w-full flex-col items-center justify-center p-8">
+                          <div className="mb-5 rounded-full border border-yellow-300/30 bg-yellow-300/10 px-4 py-1 text-xs font-bold uppercase tracking-[0.35em] text-yellow-200">
+                            Final Result
+                          </div>
+                          <div className="mb-8 text-6xl drop-shadow-[0_0_30px_rgba(250,204,21,0.6)]">👑</div>
+                          <div className="w-full max-w-xl scale-[1.08]">
+                            <CommentCard user={winner} isWinner className="border-yellow-300/70 bg-white shadow-[0_0_80px_rgba(250,204,21,0.18)]" />
+                          </div>
+                          <p className="mt-8 text-sm font-bold uppercase tracking-[0.35em] text-white/65">已抽出 {winners.length} / {winnerCount} 位中奖者</p>
+                        </div>
+                      ) : (
+                        <div className="relative z-10 text-center">
+                          <p className="text-[72px] font-black tracking-[-0.08em] text-white/8 md:text-[110px]">DRAW</p>
+                          <div className="mx-auto -mt-4 w-fit rounded-full border border-cyan-300/20 bg-cyan-300/10 px-5 py-2 text-lg font-black text-cyan-200 shadow-[0_0_40px_rgba(56,189,248,0.12)]">
+                            奖池：{filteredComments.length} 位候选人
+                          </div>
+                          {winners.length > 0 && (
+                            <p className="mt-4 text-sm text-white/55">已有 {winners.length} 位中奖者锁定，下一轮将自动排除</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="relative z-10 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
+                      <span className="font-medium">目标中奖人数：{winnerCount}</span>
+                      <span className="font-medium">待抽人数：{filteredComments.length}</span>
+                      <span className="font-medium">已锁定：{winners.length}</span>
+                    </div>
+                  </div>
+
+                  <div className="relative z-10 mt-8 flex min-h-[64px] items-center justify-center">
+                    {status === AppState.READY_TO_DRAW || status === AppState.FINISHED ? (
+                      <button 
+                        onClick={startLottery}
+                        disabled={filteredComments.length === 0 || winners.length >= winnerCount}
+                        className="group relative overflow-hidden rounded-[22px] bg-[linear-gradient(135deg,#fb7185_0%,#fb7299_42%,#0ea5e9_100%)] px-11 py-4 text-white shadow-[0_20px_60px_rgba(251,114,153,0.32)] transition-all hover:-translate-y-1 hover:scale-[1.02] hover:shadow-[0_28px_70px_rgba(14,165,233,0.28)] disabled:cursor-not-allowed disabled:opacity-45 disabled:transform-none"
+                      >
+                        <span className="absolute inset-0 bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.32),transparent)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                        <span className="relative flex items-center gap-3 text-xl font-black tracking-tight">
+                          {winners.length > 0 ? <RotateCcw className="w-6 h-6" /> : <Play className="w-6 h-6 fill-current" />}
+                          {winners.length >= winnerCount ? '抽奖已完成' : winners.length > 0 ? '继续抽下一位' : '开始抽奖'}
+                        </span>
+                      </button>
+                    ) : status === AppState.DRAWING && (
+                      <button 
+                        onClick={stopLottery}
+                        className="rounded-[22px] border border-red-200 bg-white px-11 py-4 text-red-500 shadow-[0_20px_50px_rgba(248,113,113,0.18)] transition-all hover:-translate-y-1 hover:bg-red-50"
+                      >
+                        <span className="flex items-center gap-3 text-xl font-black tracking-tight">
+                          <div className="h-3 w-3 rounded-full bg-red-500 animate-ping" />
+                          锁定当前结果
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  {winners.length > 0 && (
+                    <div className="relative z-10 mt-8 overflow-hidden rounded-[28px] border border-white/60 bg-white/65 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur">
+                      <div className="mb-4 flex items-center justify-between">
+                        <div>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-400">Result Board</p>
+                          <h3 className="mt-1 text-xl font-black text-slate-900">中奖名单</h3>
+                        </div>
+                        <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">
+                          {winners.length} / {winnerCount}
+                        </span>
+                      </div>
+                      <div className="grid gap-5 md:grid-cols-2">
+                        {winners.map((winnerItem, index) => (
+                          <CommentCard
+                            key={`${winnerItem.mid}-${index}`}
+                            user={winnerItem}
+                            isWinner
+                            className="bg-white !scale-100"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
              </div>
           </div>
 

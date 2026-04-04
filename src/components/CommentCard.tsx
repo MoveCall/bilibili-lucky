@@ -50,6 +50,11 @@ export const CommentCard: React.FC<CommentCardProps> = ({ user, isWinner, classN
         <p className={`truncate text-gray-500 ${isWinner ? 'text-base mt-1' : 'text-sm'}`}>
           {user.message}
         </p>
+        {isWinner && user.drawTime && (
+          <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">
+            抽中时间 {user.drawTime}
+          </p>
+        )}
       </div>
     </div>
   );

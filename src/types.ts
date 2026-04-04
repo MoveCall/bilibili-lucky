@@ -6,6 +6,7 @@ export interface CommentUser {
   avatar: string;
   ctime?: number;
   level: number; // User level (0-6)
+  drawTime?: string;
 }
 
 export interface BiliApiResponse<T> {
