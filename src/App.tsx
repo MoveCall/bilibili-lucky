@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import confetti from 'canvas-confetti';
-import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, AlertTriangle } from 'lucide-react';
+import { Play, RotateCcw, MonitorPlay, CloudLightning, Upload, CheckCircle2, ShieldCheck, Settings2, AlertTriangle, Users } from 'lucide-react';
 
 import { Input } from './components/Input';
 import { Button } from './components/Button';
@@ -34,7 +34,35 @@ const App: React.FC = () => {
   const [currentCandidate, setCurrentCandidate] = useState<CommentUser | null>(null);
   const [winner, setWinner] = useState<CommentUser | null>(null);
   const [winners, setWinners] = useState<CommentUser[]>([]);
+  const [onlineCount, setOnlineCount] = useState<number>(-1);
   const timerRef = useRef<number | null>(null);
+  const visitorIdRef = useRef<string | null>(null);
+  const heartbeatRef = useRef<number | null>(null);
+
+  const reportOnline = useCallback(async (vid: string) => {
+    try {
+      const res = await fetch(`/api/proxy?type=online&visitorId=${encodeURIComponent(vid)}`);
+      const json = await res.json();
+      if (json.data?.online >= 0) {
+        setOnlineCount(json.data.online);
+      }
+    } catch {}
+  }, []);
+
+  const startHeartbeat = useCallback((vid: string) => {
+    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    reportOnline(vid);
+    heartbeatRef.current = window.setInterval(() => reportOnline(vid), 30000);
+  }, [reportOnline]);
+
+  useEffect(() => {
+    const vid = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    visitorIdRef.current = vid;
+    startHeartbeat(vid);
+    return () => {
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    };
+  }, [startHeartbeat]);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const entry: LogEntry = {
@@ -303,9 +331,17 @@ const App: React.FC = () => {
               Bilibili <span className="text-bili-pink">Lucky Draw</span> Pro
             </h1>
           </div>
-          <div className={`flex items-center gap-2 text-sm font-medium px-3 py-1 rounded-full border ${isAnonymousMode ? 'text-orange-600 bg-orange-50 border-orange-100' : 'text-green-600 bg-green-50 border-green-100'}`}>
-            {isAnonymousMode ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-            {isAnonymousMode ? '在线匿名模式' : '在线抓取模式'}
+          <div className="flex items-center gap-3">
+            {onlineCount >= 0 && (
+              <div className="flex items-center gap-1.5 text-sm font-medium px-3 py-1 rounded-full border border-gray-100 bg-gray-50 text-gray-600">
+                <Users className="w-4 h-4 text-blue-500" />
+                <span>{onlineCount} 人在线</span>
+              </div>
+            )}
+            <div className={`flex items-center gap-2 text-sm font-medium px-3 py-1 rounded-full border ${isAnonymousMode ? 'text-orange-600 bg-orange-50 border-orange-100' : 'text-green-600 bg-green-50 border-green-100'}`}>
+              {isAnonymousMode ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+              {isAnonymousMode ? '在线匿名模式' : '在线抓取模式'}
+            </div>
           </div>
         </div>
       </nav>
