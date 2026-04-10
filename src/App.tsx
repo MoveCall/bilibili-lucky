@@ -7,6 +7,10 @@ import { Button } from './components/Button';
 import { CommentCard } from './components/CommentCard';
 import { Logger } from './components/Logger';
 import { getVideoInfo, getAllComments } from './services/biliService';
+import { verifyCandidateByUid } from './services/botFilterService';
+import { loadBotFilterConfig, saveBotFilterConfig } from './utils/botFilterStorage';
+import { BotReviewResult } from './utils/botScoring';
+import { buildExportPayload, DrawRoundRecord, SkippedCandidateRecord } from './utils/exportPayload';
 import { CommentUser, VideoInfo, LogEntry } from '../types';
 
 enum AppState {
@@ -15,6 +19,7 @@ enum AppState {
   FETCHING_COMMENTS,
   READY_TO_DRAW,
   DRAWING,
+  REVIEWING,
   FINISHED
 }
 
@@ -34,6 +39,11 @@ const App: React.FC = () => {
   const [currentCandidate, setCurrentCandidate] = useState<CommentUser | null>(null);
   const [winner, setWinner] = useState<CommentUser | null>(null);
   const [winners, setWinners] = useState<CommentUser[]>([]);
+  const [drawRounds, setDrawRounds] = useState<DrawRoundRecord[]>([]);
+  const [botFilterConfig, setBotFilterConfig] = useState(loadBotFilterConfig());
+  const [isReviewingCandidate, setIsReviewingCandidate] = useState(false);
+  const [reviewAttempts, setReviewAttempts] = useState(0);
+  const [skippedCandidates, setSkippedCandidates] = useState<SkippedCandidateRecord[]>([]);
   const [onlineCount, setOnlineCount] = useState<number>(-1);
   const timerRef = useRef<number | null>(null);
   const visitorIdRef = useRef<string | null>(null);
@@ -87,12 +97,20 @@ const App: React.FC = () => {
     setCurrentCandidate(null);
     setWinner(null);
     setWinners([]);
+    setDrawRounds([]);
+    setSkippedCandidates([]);
+    setReviewAttempts(0);
+    setIsReviewingCandidate(false);
     setIsAnonymousMode(false);
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
   };
+
+  useEffect(() => {
+    saveBotFilterConfig(botFilterConfig);
+  }, [botFilterConfig]);
 
   const normalizeBvid = (raw: string) => {
     const value = raw.trim();
@@ -196,12 +214,17 @@ const App: React.FC = () => {
       result = result.filter((comment) => !winnerIds.has(comment.mid));
     }
 
+    if (skippedCandidates.length > 0) {
+      const skippedIds = new Set(skippedCandidates.map((candidate) => candidate.mid));
+      result = result.filter((comment) => !skippedIds.has(comment.mid));
+    }
+
     setFilteredComments(result);
   };
 
   useEffect(() => {
     applyFilters();
-  }, [allComments, keyword, removeDuplicates, minLevel, winners]);
+  }, [allComments, keyword, removeDuplicates, minLevel, winners, skippedCandidates]);
 
   useEffect(() => {
     return () => {
@@ -234,7 +257,92 @@ const App: React.FC = () => {
     timerRef.current = interval;
   };
 
-  const stopLottery = () => {
+  const acceptWinner = (candidate: CommentUser, reviewResult: BotReviewResult | null) => {
+    const finalWinner = {
+      ...candidate,
+      drawTime: formatDrawTime()
+    };
+    const nextWinners = [...winners, finalWinner];
+    const nextDrawRounds = [...drawRounds, {
+      round: nextWinners.length,
+      drawnAt: finalWinner.drawTime,
+      filters: {
+        keyword,
+        removeDuplicates,
+        minLevel
+      },
+      eligibleCandidateCount: filteredComments.length,
+      winnerMid: finalWinner.mid,
+      botFilterConfig: botFilterConfig.enabled ? { ...botFilterConfig } : undefined,
+      reviewResult
+    }];
+    setDrawRounds(nextDrawRounds);
+    setWinners(nextWinners);
+    setWinner(finalWinner);
+    setCurrentCandidate(finalWinner);
+    setReviewAttempts(0);
+    setStatus(nextWinners.length >= winnerCount ? AppState.FINISHED : AppState.READY_TO_DRAW);
+    addLog(`中奖者产生: ${finalWinner.uname}（第 ${nextWinners.length} / ${winnerCount} 位）`, 'success');
+    fireConfetti();
+  };
+
+  const reviewCandidate = async (candidate: CommentUser, attempt: number, blockedMids = new Set<string>()) => {
+    setStatus(AppState.REVIEWING);
+    setIsReviewingCandidate(true);
+    addLog(`正在审核账号 ${candidate.uname}（UID: ${candidate.mid}）`, 'info');
+
+    try {
+      const reviewResult = await verifyCandidateByUid(candidate, botFilterConfig);
+      setIsReviewingCandidate(false);
+
+      if (reviewResult.passed) {
+        addLog(`账号 ${candidate.uname} 审核通过，风险分 ${reviewResult.score}`, 'success');
+        acceptWinner(candidate, reviewResult);
+        return;
+      }
+
+      const skippedRecord: SkippedCandidateRecord = {
+        mid: candidate.mid,
+        uname: candidate.uname,
+        skippedAt: formatDrawTime(),
+        reviewResult
+      };
+      setSkippedCandidates((prev) => [...prev, skippedRecord]);
+      addLog(
+        `账号 ${candidate.uname} 未通过审核：${reviewResult.reasonCodes.join(' / ') || '风险过高'}，已自动重抽`,
+        'warning'
+      );
+
+      const nextAttempt = attempt + 1;
+      setReviewAttempts(nextAttempt);
+      if (nextAttempt >= botFilterConfig.retryLimit) {
+        addLog('达到机器人过滤最大重试次数，请调整阈值或关闭过滤。', 'warning');
+        setStatus(AppState.READY_TO_DRAW);
+        return;
+      }
+
+      const nextBlockedMids = new Set(blockedMids);
+      nextBlockedMids.add(candidate.mid);
+      const remainingCandidates = filteredComments.filter((item) => !nextBlockedMids.has(item.mid));
+      const nextCandidate = remainingCandidates[Math.floor(Math.random() * remainingCandidates.length)];
+
+      if (!nextCandidate) {
+        addLog('没有剩余候选人可继续审核。', 'warning');
+        setStatus(AppState.READY_TO_DRAW);
+        return;
+      }
+
+      setCurrentCandidate(nextCandidate);
+      await reviewCandidate(nextCandidate, nextAttempt, nextBlockedMids);
+    } catch (error) {
+      setIsReviewingCandidate(false);
+      const message = error instanceof Error ? error.message : '审核失败';
+      addLog(`账号审核异常（${message}），已按默认策略放行。`, 'warning');
+      acceptWinner(candidate, null);
+    }
+  };
+
+  const stopLottery = async () => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -247,17 +355,12 @@ const App: React.FC = () => {
       return;
     }
 
-    const finalWinner = {
-      ...finalCandidate,
-      drawTime: formatDrawTime()
-    };
-    const nextWinners = [...winners, finalWinner];
-    setWinners(nextWinners);
-    setWinner(finalWinner);
-    setCurrentCandidate(finalWinner);
-    setStatus(nextWinners.length >= winnerCount ? AppState.FINISHED : AppState.READY_TO_DRAW);
-    addLog(`中奖者产生: ${finalWinner.uname}（第 ${nextWinners.length} / ${winnerCount} 位）`, 'success');
-    fireConfetti();
+    if (!botFilterConfig.enabled) {
+      acceptWinner(finalCandidate, null);
+      return;
+    }
+
+    await reviewCandidate(finalCandidate, 0);
   };
 
   const exportResults = () => {
@@ -266,25 +369,19 @@ const App: React.FC = () => {
       return;
     }
 
-    const exportPayload = {
-      exportedAt: new Date().toISOString(),
-      video: {
-        bvid: videoInfo.bvid,
-        aid: videoInfo.aid,
-        title: videoInfo.title
-      },
-      filters: {
+    const exportPayload = buildExportPayload({
+      videoInfo,
+      allCommentsCount: allComments.length,
+      currentUiFilters: {
         keyword,
         removeDuplicates,
         minLevel
       },
-      summary: {
-        totalComments: allComments.length,
-        eligibleCandidates: winners.length + filteredComments.length,
-        winnerCount: winners.length
-      },
-      winners
-    };
+      currentEligibleCount: winners.length + filteredComments.length,
+      winners,
+      drawRounds,
+      skippedCandidates
+    });
 
     const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -312,6 +409,7 @@ const App: React.FC = () => {
     status === AppState.FETCHING_INFO ? '解析视频信息中' :
     status === AppState.FETCHING_COMMENTS ? '抓取评论中' :
     status === AppState.DRAWING ? `正在抽取第 ${winners.length + 1} 位中奖者` :
+    status === AppState.REVIEWING ? '正在审核账号真实性' :
     status === AppState.FINISHED ? '抽奖结果已锁定' :
     filteredComments.length > 0 ? '候选池已就绪' :
     '等待加载评论';
@@ -464,6 +562,111 @@ const App: React.FC = () => {
                    </select>
                 </div>
 
+                <div className="rounded-2xl border border-gray-200 bg-gray-50/70 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700">机器人过滤</p>
+                      <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                        锁定中奖者前检查其空间动态，命中高风险规则后自动重抽。
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={botFilterConfig.enabled}
+                        onChange={(e) => setBotFilterConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-bili-pink peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all" />
+                    </label>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">最低等级</label>
+                      <select
+                        value={botFilterConfig.minLevel}
+                        onChange={(e) => setBotFilterConfig((prev) => ({ ...prev, minLevel: Number(e.target.value) }))}
+                        className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="0">Lv0</option>
+                        <option value="1">Lv1</option>
+                        <option value="2">Lv2</option>
+                        <option value="3">Lv3</option>
+                        <option value="4">Lv4</option>
+                        <option value="5">Lv5</option>
+                        <option value="6">Lv6</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">最大重试次数</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={botFilterConfig.retryLimit}
+                        onChange={(e) => setBotFilterConfig((prev) => ({ ...prev, retryLimit: Number(e.target.value) || 1 }))}
+                        className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">转发率阈值</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step="0.05"
+                        value={botFilterConfig.forwardRatioLimit}
+                        onChange={(e) => setBotFilterConfig((prev) => ({ ...prev, forwardRatioLimit: Number(e.target.value) }))}
+                        className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">抽奖词密度阈值</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step="0.05"
+                        value={botFilterConfig.keywordRatioLimit}
+                        onChange={(e) => setBotFilterConfig((prev) => ({ ...prev, keywordRatioLimit: Number(e.target.value) }))}
+                        className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">动态样本数</label>
+                      <input
+                        type="number"
+                        min={5}
+                        max={50}
+                        value={botFilterConfig.dynamicSampleSize}
+                        onChange={(e) => setBotFilterConfig((prev) => ({ ...prev, dynamicSampleSize: Number(e.target.value) || 20 }))}
+                        className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">隐私动态处理</label>
+                      <select
+                        value={botFilterConfig.privatePolicy}
+                        onChange={(e) => setBotFilterConfig((prev) => ({
+                          ...prev,
+                          privatePolicy: e.target.value as typeof prev.privatePolicy
+                        }))}
+                        className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="reject">直接剔除</option>
+                        <option value="allow">默认通过</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {skippedCandidates.length > 0 && (
+                    <p className="mt-3 text-xs text-gray-500">
+                      当前会话已自动跳过 {skippedCandidates.length} 个高风险账号，最近一次重试次数：{reviewAttempts}
+                    </p>
+                  )}
+                </div>
+
                 <Button
                   variant="outline"
                   onClick={exportResults}
@@ -600,9 +803,10 @@ const App: React.FC = () => {
                           {winners.length >= winnerCount ? '抽奖已完成' : winners.length > 0 ? '继续抽下一位' : '开始抽奖'}
                         </span>
                       </button>
-                    ) : status === AppState.DRAWING && (
+                    ) : status === AppState.DRAWING ? (
                       <button 
                         onClick={stopLottery}
+                        disabled={isReviewingCandidate}
                         className="rounded-[22px] border border-red-200 bg-white px-11 py-4 text-red-500 shadow-[0_20px_50px_rgba(248,113,113,0.18)] transition-all hover:-translate-y-1 hover:bg-red-50"
                       >
                         <span className="flex items-center gap-3 text-xl font-black tracking-tight">
@@ -610,6 +814,13 @@ const App: React.FC = () => {
                           锁定当前结果
                         </span>
                       </button>
+                    ) : status === AppState.REVIEWING && (
+                      <div className="rounded-[22px] border border-cyan-200 bg-white px-11 py-4 text-cyan-600 shadow-[0_20px_50px_rgba(34,211,238,0.15)]">
+                        <span className="flex items-center gap-3 text-xl font-black tracking-tight">
+                          <div className="h-3 w-3 rounded-full bg-cyan-500 animate-pulse" />
+                          正在审核账号真实性
+                        </span>
+                      </div>
                     )}
                   </div>
 
