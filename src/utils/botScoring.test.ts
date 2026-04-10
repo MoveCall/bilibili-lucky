@@ -69,7 +69,7 @@ describe('reviewCandidate', () => {
     expect(result.metrics.keywordRatio).toBe(1);
   });
 
-  it('fails accounts with more than 3 forwards in any rolling 24-hour window', () => {
+  it('passes when only 4 forwards appear within 24 hours', () => {
     const now = 1710000000;
     vi.useFakeTimers();
     vi.setSystemTime(now * 1000);
@@ -87,11 +87,11 @@ describe('reviewCandidate', () => {
       ]
     });
 
-    expect(result.passed).toBe(false);
-    expect(result.reasonCodes).toContain('FORWARD_LIMIT_24H');
+    expect(result.passed).toBe(true);
+    expect(result.reasonCodes).not.toContain('FORWARD_OR_SHARED_VIDEO_LIMIT_24H');
   });
 
-  it('fails accounts that shared videos within the last 3 days', () => {
+  it('fails accounts when forward and shared-video dynamics reach 5 items within 24 hours', () => {
     const now = 1710000000;
     vi.useFakeTimers();
     vi.setSystemTime(now * 1000);
@@ -101,12 +101,35 @@ describe('reviewCandidate', () => {
       dynamicsVisible: true,
       config: baseConfig,
       dynamics: [
-        { id: 'd-1', type: 'DYNAMIC_TYPE_AV', text: '分享视频', createdAt: now - 60 },
-        { id: 'd-2', type: 'DYNAMIC_TYPE_WORD', text: '原创内容', createdAt: now - 2 * 60 * 60 }
+        { id: 'd-1', type: 'DYNAMIC_TYPE_FORWARD', text: '转发动态 1', createdAt: now - 60 },
+        { id: 'd-2', type: 'DYNAMIC_TYPE_FORWARD', text: '转发动态 2', createdAt: now - 2 * 60 * 60 },
+        { id: 'd-3', type: 'DYNAMIC_TYPE_AV', text: '分享视频 1', createdAt: now - 3 * 60 * 60 },
+        { id: 'd-4', type: 'DYNAMIC_TYPE_UGC_SEASON', text: '分享视频 2', createdAt: now - 4 * 60 * 60 },
+        { id: 'd-5', type: 'DYNAMIC_TYPE_WORD', text: '我来分享视频', createdAt: now - 5 * 60 * 60 }
       ]
     });
 
     expect(result.passed).toBe(false);
-    expect(result.reasonCodes).toContain('SHARED_VIDEO_DYNAMIC');
+    expect(result.reasonCodes).toContain('FORWARD_OR_SHARED_VIDEO_LIMIT_24H');
+  });
+
+  it('passes when forward and shared-video dynamics stay below the 24-hour threshold', () => {
+    const now = 1710000000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+
+    const result = reviewCandidate({
+      level: 5,
+      dynamicsVisible: true,
+      config: baseConfig,
+      dynamics: [
+        { id: 'd-1', type: 'DYNAMIC_TYPE_FORWARD', text: '转发动态 1', createdAt: now - 60 },
+        { id: 'd-2', type: 'DYNAMIC_TYPE_AV', text: '分享视频 1', createdAt: now - 2 * 60 * 60 },
+        { id: 'd-3', type: 'DYNAMIC_TYPE_WORD', text: '原创内容', createdAt: now - 3 * 60 * 60 },
+        { id: 'd-4', type: 'DYNAMIC_TYPE_WORD', text: '普通动态', createdAt: now - 4 * 60 * 60 }
+      ]
+    });
+
+    expect(result.reasonCodes).not.toContain('FORWARD_OR_SHARED_VIDEO_LIMIT_24H');
   });
 });

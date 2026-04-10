@@ -36,7 +36,7 @@ const LOTTERY_KEYWORDS = ['互动抽奖', '抽奖', '中奖', '开奖', '转发�
 const BURST_WINDOW_SECONDS = 5 * 60;
 const BURST_TRIGGER_COUNT = 3;
 const LOOKBACK_WINDOW_SECONDS = 3 * 24 * 60 * 60;
-const FORWARD_LIMIT_24H = 3;
+const FORWARD_OR_SHARED_VIDEO_LIMIT_24H = 5;
 const VIDEO_SHARE_TYPES = new Set(['DYNAMIC_TYPE_AV', 'DYNAMIC_TYPE_UGC_SEASON']);
 
 function buildResult(overrides: Partial<BotReviewResult> & { metrics: BotReviewMetrics }): BotReviewResult {
@@ -87,13 +87,31 @@ function getRecentForwardCount24hMax(dynamics: UserDynamicItem[]) {
   return maxCount;
 }
 
-function hasSharedVideoDynamic(dynamics: UserDynamicItem[]) {
+function getRecentForwardOrSharedVideoCount24hMax(dynamics: UserDynamicItem[]) {
   const cutoff = Math.floor(Date.now() / 1000) - LOOKBACK_WINDOW_SECONDS;
+  const matchedItems = dynamics
+    .filter((item) => (
+      item.createdAt >= cutoff &&
+      (
+        item.type === 'DYNAMIC_TYPE_FORWARD' ||
+        VIDEO_SHARE_TYPES.has(item.type) ||
+        item.text.includes('分享视频')
+      )
+    ))
+    .sort((a, b) => a.createdAt - b.createdAt);
 
-  return dynamics.some((item) => (
-    item.createdAt >= cutoff &&
-    (VIDEO_SHARE_TYPES.has(item.type) || item.text.includes('分享视频'))
-  ));
+  let maxCount = 0;
+  let left = 0;
+
+  for (let right = 0; right < matchedItems.length; right += 1) {
+    while (matchedItems[right].createdAt - matchedItems[left].createdAt > 24 * 60 * 60) {
+      left += 1;
+    }
+
+    maxCount = Math.max(maxCount, right - left + 1);
+  }
+
+  return maxCount;
 }
 
 export function reviewCandidate({
@@ -158,32 +176,15 @@ export function reviewCandidate({
   const keywordCount = dynamics.filter((item) => LOTTERY_KEYWORDS.some((keyword) => item.text.includes(keyword))).length;
   const burstCount = getBurstCount(dynamics);
   const recentForwardCount24hMax = getRecentForwardCount24hMax(dynamics);
-  const sharedVideoDynamic = hasSharedVideoDynamic(dynamics);
+  const recentForwardOrSharedVideoCount24hMax = getRecentForwardOrSharedVideoCount24hMax(dynamics);
   const forwardRatio = repostCount / dynamicCount;
   const keywordRatio = keywordCount / dynamicCount;
 
-  if (sharedVideoDynamic) {
+  if (recentForwardOrSharedVideoCount24hMax >= FORWARD_OR_SHARED_VIDEO_LIMIT_24H) {
     return buildResult({
       passed: false,
       score: 100,
-      reasonCodes: ['SHARED_VIDEO_DYNAMIC'],
-      metrics: {
-        level,
-        dynamicCount: dynamics.length,
-        forwardRatio,
-        keywordRatio,
-        burstCount,
-        recentForwardCount24hMax,
-        privateDynamics: false
-      }
-    });
-  }
-
-  if (recentForwardCount24hMax > FORWARD_LIMIT_24H) {
-    return buildResult({
-      passed: false,
-      score: 100,
-      reasonCodes: ['FORWARD_LIMIT_24H'],
+      reasonCodes: ['FORWARD_OR_SHARED_VIDEO_LIMIT_24H'],
       metrics: {
         level,
         dynamicCount: dynamics.length,
