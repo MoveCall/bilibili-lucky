@@ -60,6 +60,19 @@ function sanitizeWbiValue(value) {
   return String(value).replace(/[!'()*]/g, '');
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeDynamicItem(item) {
+  return {
+    id: item?.id_str ?? '',
+    type: item?.type ?? '',
+    text: item?.modules?.module_dynamic?.desc?.text ?? '',
+    createdAt: item?.modules?.module_author?.pub_ts ?? 0
+  };
+}
+
 async function getWbiKeys() {
   if (cachedWbiKeys.imgKey && cachedWbiKeys.subKey && Date.now() < cachedWbiKeys.expiresAt) {
     return cachedWbiKeys;
@@ -118,7 +131,7 @@ async function signWbiParams(params) {
 }
 
 function buildTargetUrl(params) {
-  const { type = 'reply', oid, bvid, root, pn = 1, ps = 20 } = params;
+  const { type = 'reply', oid, bvid, root, pn = 1, ps = 20, host_mid } = params;
 
   if (type === 'status') {
     return '';
@@ -129,6 +142,14 @@ function buildTargetUrl(params) {
       throw new Error('Missing bvid parameter');
     }
     return `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`;
+  }
+
+  if (type === 'spaceDynamic') {
+    if (!host_mid) {
+      throw new Error('Missing host_mid parameter');
+    }
+
+    return 'https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space';
   }
 
   if (!oid) {
@@ -153,7 +174,19 @@ function buildTargetUrl(params) {
 }
 
 export async function fetchBiliApi(params) {
-  const { type = 'reply', oid, next, pagination_str, seek_rpid, mode = '2', plat = '1', web_location = '1315875' } = params;
+  const {
+    type = 'reply',
+    oid,
+    next,
+    pagination_str,
+    seek_rpid,
+    mode = '2',
+    plat = '1',
+    web_location = '1315875',
+    host_mid,
+    offset,
+    sampleSize = '20'
+  } = params;
 
   if (type === 'status') {
     return {
@@ -180,6 +213,15 @@ export async function fetchBiliApi(params) {
       web_location: String(web_location)
     });
     requestUrl = `${targetUrl}?${signedParams.toString()}`;
+  } else if (type === 'spaceDynamic') {
+    const signedParams = await signWbiParams({
+      host_mid: String(host_mid),
+      offset: offset ?? ''
+    });
+    requestUrl = `${targetUrl}?${signedParams.toString()}`;
+
+    // Slow down repeated profile checks a bit to reduce burstiness.
+    await sleep(500 + Math.floor(Math.random() * 500));
   }
 
   const response = await fetch(requestUrl, { headers: buildHeaders() });
@@ -193,6 +235,20 @@ export async function fetchBiliApi(params) {
     data = await response.json();
   } catch {
     throw new Error('Bilibili upstream returned invalid JSON');
+  }
+
+  if (type === 'spaceDynamic') {
+    const limit = Number(sampleSize);
+    const normalizedItems = (data?.data?.items ?? []).map(normalizeDynamicItem);
+
+    return {
+      ...data,
+      data: {
+        items: Number.isFinite(limit) && limit > 0 ? normalizedItems.slice(0, limit) : normalizedItems,
+        hasMore: Boolean(data?.data?.has_more),
+        offset: data?.data?.offset ?? ''
+      }
+    };
   }
 
   return data;
