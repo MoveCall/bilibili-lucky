@@ -90,4 +90,23 @@ describe('reviewCandidate', () => {
     expect(result.passed).toBe(false);
     expect(result.reasonCodes).toContain('FORWARD_LIMIT_24H');
   });
+
+  it('fails accounts that shared videos within the last 3 days', () => {
+    const now = 1710000000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+
+    const result = reviewCandidate({
+      level: 5,
+      dynamicsVisible: true,
+      config: baseConfig,
+      dynamics: [
+        { id: 'd-1', type: 'DYNAMIC_TYPE_AV', text: '分享视频', createdAt: now - 60 },
+        { id: 'd-2', type: 'DYNAMIC_TYPE_WORD', text: '原创内容', createdAt: now - 2 * 60 * 60 }
+      ]
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reasonCodes).toContain('SHARED_VIDEO_DYNAMIC');
+  });
 });

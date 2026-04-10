@@ -11,6 +11,7 @@ import { verifyCandidateByUid } from './services/botFilterService';
 import { loadBotFilterConfig, saveBotFilterConfig } from './utils/botFilterStorage';
 import { BotReviewResult } from './utils/botScoring';
 import { buildExportPayload, DrawRoundRecord, SkippedCandidateRecord } from './utils/exportPayload';
+import { getOrCreateVisitorId } from './utils/onlineVisitor';
 import { CommentUser, VideoInfo, LogEntry } from '../types';
 
 enum AppState {
@@ -66,7 +67,7 @@ const App: React.FC = () => {
   }, [reportOnline]);
 
   useEffect(() => {
-    const vid = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const vid = getOrCreateVisitorId();
     visitorIdRef.current = vid;
     startHeartbeat(vid);
     return () => {
