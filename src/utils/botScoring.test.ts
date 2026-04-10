@@ -83,7 +83,7 @@ describe('reviewCandidate', () => {
         { id: 'd-2', type: 'DYNAMIC_TYPE_FORWARD', text: '转发 2', createdAt: now - 60 * 60 },
         { id: 'd-3', type: 'DYNAMIC_TYPE_FORWARD', text: '转发 3', createdAt: now - 2 * 60 * 60 },
         { id: 'd-4', type: 'DYNAMIC_TYPE_FORWARD', text: '转发 4', createdAt: now - 3 * 60 * 60 },
-        { id: 'd-5', type: 'DYNAMIC_TYPE_WORD', text: '原创内容', createdAt: now - 5 * 24 * 60 * 60 }
+        { id: 'd-5', type: 'DYNAMIC_TYPE_WORD', text: '原创内容', createdAt: now - 35 * 24 * 60 * 60 }
       ]
     });
 
@@ -110,7 +110,7 @@ describe('reviewCandidate', () => {
     });
 
     expect(result.passed).toBe(false);
-    expect(result.reasonCodes).toContain('FORWARD_OR_SHARED_VIDEO_LIMIT_24H');
+    expect(result.reasonCodes).toContain('RECENT_FIVE_WITHIN_ONE_MONTH');
   });
 
   it('passes when forward and shared-video dynamics stay below the 24-hour threshold', () => {
@@ -131,5 +131,48 @@ describe('reviewCandidate', () => {
     });
 
     expect(result.reasonCodes).not.toContain('FORWARD_OR_SHARED_VIDEO_LIMIT_24H');
+  });
+
+  it('fails when the latest 5 dynamics are all within one month', () => {
+    const now = 1710000000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+
+    const result = reviewCandidate({
+      level: 5,
+      dynamicsVisible: true,
+      config: baseConfig,
+      dynamics: [
+        { id: 'd-1', type: 'DYNAMIC_TYPE_WORD', text: '动态 1', createdAt: now - 1 * 24 * 60 * 60 },
+        { id: 'd-2', type: 'DYNAMIC_TYPE_WORD', text: '动态 2', createdAt: now - 7 * 24 * 60 * 60 },
+        { id: 'd-3', type: 'DYNAMIC_TYPE_WORD', text: '动态 3', createdAt: now - 14 * 24 * 60 * 60 },
+        { id: 'd-4', type: 'DYNAMIC_TYPE_WORD', text: '动态 4', createdAt: now - 20 * 24 * 60 * 60 },
+        { id: 'd-5', type: 'DYNAMIC_TYPE_WORD', text: '动态 5', createdAt: now - 29 * 24 * 60 * 60 }
+      ]
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reasonCodes).toContain('RECENT_FIVE_WITHIN_ONE_MONTH');
+  });
+
+  it('passes when the latest 5 dynamics span more than one month', () => {
+    const now = 1710000000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+
+    const result = reviewCandidate({
+      level: 5,
+      dynamicsVisible: true,
+      config: baseConfig,
+      dynamics: [
+        { id: 'd-1', type: 'DYNAMIC_TYPE_WORD', text: '动态 1', createdAt: now - 1 * 24 * 60 * 60 },
+        { id: 'd-2', type: 'DYNAMIC_TYPE_WORD', text: '动态 2', createdAt: now - 7 * 24 * 60 * 60 },
+        { id: 'd-3', type: 'DYNAMIC_TYPE_WORD', text: '动态 3', createdAt: now - 14 * 24 * 60 * 60 },
+        { id: 'd-4', type: 'DYNAMIC_TYPE_WORD', text: '动态 4', createdAt: now - 20 * 24 * 60 * 60 },
+        { id: 'd-5', type: 'DYNAMIC_TYPE_WORD', text: '动态 5', createdAt: now - 35 * 24 * 60 * 60 }
+      ]
+    });
+
+    expect(result.reasonCodes).not.toContain('RECENT_FIVE_WITHIN_ONE_MONTH');
   });
 });

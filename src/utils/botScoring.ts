@@ -38,6 +38,7 @@ const BURST_TRIGGER_COUNT = 3;
 const LOOKBACK_WINDOW_SECONDS = 3 * 24 * 60 * 60;
 const FORWARD_OR_SHARED_VIDEO_LIMIT_24H = 5;
 const VIDEO_SHARE_TYPES = new Set(['DYNAMIC_TYPE_AV', 'DYNAMIC_TYPE_UGC_SEASON']);
+const ONE_MONTH_SECONDS = 30 * 24 * 60 * 60;
 
 function buildResult(overrides: Partial<BotReviewResult> & { metrics: BotReviewMetrics }): BotReviewResult {
   return {
@@ -114,6 +115,18 @@ function getRecentForwardOrSharedVideoCount24hMax(dynamics: UserDynamicItem[]) {
   return maxCount;
 }
 
+function latestFiveWithinOneMonth(dynamics: UserDynamicItem[]) {
+  if (dynamics.length < 5) {
+    return false;
+  }
+
+  const sorted = [...dynamics].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
+  const oldestOfFive = sorted[sorted.length - 1];
+  const cutoff = Math.floor(Date.now() / 1000) - ONE_MONTH_SECONDS;
+
+  return oldestOfFive.createdAt >= cutoff;
+}
+
 export function reviewCandidate({
   level,
   dynamics,
@@ -177,8 +190,26 @@ export function reviewCandidate({
   const burstCount = getBurstCount(dynamics);
   const recentForwardCount24hMax = getRecentForwardCount24hMax(dynamics);
   const recentForwardOrSharedVideoCount24hMax = getRecentForwardOrSharedVideoCount24hMax(dynamics);
+  const fiveWithinOneMonth = latestFiveWithinOneMonth(dynamics);
   const forwardRatio = repostCount / dynamicCount;
   const keywordRatio = keywordCount / dynamicCount;
+
+  if (fiveWithinOneMonth) {
+    return buildResult({
+      passed: false,
+      score: 100,
+      reasonCodes: ['RECENT_FIVE_WITHIN_ONE_MONTH'],
+      metrics: {
+        level,
+        dynamicCount: dynamics.length,
+        forwardRatio,
+        keywordRatio,
+        burstCount,
+        recentForwardCount24hMax,
+        privateDynamics: false
+      }
+    });
+  }
 
   if (recentForwardOrSharedVideoCount24hMax >= FORWARD_OR_SHARED_VIDEO_LIMIT_24H) {
     return buildResult({
