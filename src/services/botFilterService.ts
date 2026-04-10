@@ -6,7 +6,6 @@ interface UserDynamicsResult {
   items: UserDynamicItem[];
 }
 
-const LOOKBACK_WINDOW_SECONDS = 3 * 24 * 60 * 60;
 const MAX_DYNAMIC_PAGES = 5;
 
 async function fetchDynamicsPage(hostMid: string, sampleSize: number, offset = '') {
@@ -26,11 +25,11 @@ async function fetchDynamicsPage(hostMid: string, sampleSize: number, offset = '
 
 export async function fetchUserDynamics(hostMid: string, sampleSize: number): Promise<UserDynamicsResult> {
   const items: UserDynamicItem[] = [];
-  const cutoff = Math.floor(Date.now() / 1000) - LOOKBACK_WINDOW_SECONDS;
+  const targetCount = Math.min(Math.max(sampleSize, 1), 5);
   let offset = '';
 
   for (let page = 0; page < MAX_DYNAMIC_PAGES; page += 1) {
-    const payload = await fetchDynamicsPage(hostMid, sampleSize, offset);
+    const payload = await fetchDynamicsPage(hostMid, targetCount, offset);
 
     if (payload.code !== 0) {
       if (payload.message?.includes('动态不可见')) {
@@ -44,10 +43,9 @@ export async function fetchUserDynamics(hostMid: string, sampleSize: number): Pr
     }
 
     const pageItems = payload.data?.items ?? [];
-    items.push(...pageItems.filter((item: UserDynamicItem) => item.createdAt >= cutoff));
+    items.push(...pageItems);
 
-    const oldestItem = pageItems[pageItems.length - 1];
-    if (!payload.data?.hasMore || !payload.data?.offset || (oldestItem && oldestItem.createdAt < cutoff)) {
+    if (items.length >= targetCount || !payload.data?.hasMore || !payload.data?.offset) {
       break;
     }
 
@@ -56,7 +54,7 @@ export async function fetchUserDynamics(hostMid: string, sampleSize: number): Pr
 
   return {
     visible: true,
-    items
+    items: items.slice(0, targetCount)
   };
 }
 

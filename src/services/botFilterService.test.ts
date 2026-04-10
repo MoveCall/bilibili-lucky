@@ -46,10 +46,7 @@ describe('fetchUserDynamics', () => {
     expect(result.items).toEqual([]);
   });
 
-  it('keeps paging until it covers the last 3 days of dynamics', async () => {
-    const now = 1710000000;
-    vi.useFakeTimers();
-    vi.setSystemTime(now * 1000);
+  it('keeps paging only until it collects the most recent 5 dynamics', async () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce({
         ok: true,
@@ -58,8 +55,9 @@ describe('fetchUserDynamics', () => {
           message: 'OK',
           data: {
             items: [
-              { id: 'dyn-1', type: 'DYNAMIC_TYPE_FORWARD', text: '1', createdAt: now - 60 },
-              { id: 'dyn-2', type: 'DYNAMIC_TYPE_FORWARD', text: '2', createdAt: now - 24 * 60 * 60 }
+              { id: 'dyn-1', type: 'DYNAMIC_TYPE_FORWARD', text: '1', createdAt: 10 },
+              { id: 'dyn-2', type: 'DYNAMIC_TYPE_FORWARD', text: '2', createdAt: 9 },
+              { id: 'dyn-3', type: 'DYNAMIC_TYPE_FORWARD', text: '3', createdAt: 8 }
             ],
             hasMore: true,
             offset: 'next-page'
@@ -73,11 +71,12 @@ describe('fetchUserDynamics', () => {
           message: 'OK',
           data: {
             items: [
-              { id: 'dyn-3', type: 'DYNAMIC_TYPE_FORWARD', text: '3', createdAt: now - 2 * 24 * 60 * 60 },
-              { id: 'dyn-4', type: 'DYNAMIC_TYPE_FORWARD', text: '4', createdAt: now - 4 * 24 * 60 * 60 }
+              { id: 'dyn-4', type: 'DYNAMIC_TYPE_FORWARD', text: '4', createdAt: 7 },
+              { id: 'dyn-5', type: 'DYNAMIC_TYPE_FORWARD', text: '5', createdAt: 6 },
+              { id: 'dyn-6', type: 'DYNAMIC_TYPE_FORWARD', text: '6', createdAt: 5 }
             ],
-            hasMore: false,
-            offset: ''
+            hasMore: true,
+            offset: 'ignored'
           }
         })
       } as Response);
@@ -85,7 +84,7 @@ describe('fetchUserDynamics', () => {
     const result = await fetchUserDynamics('12345', 20);
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
-    expect(result.items.map((item) => item.id)).toEqual(['dyn-1', 'dyn-2', 'dyn-3']);
+    expect(result.items.map((item) => item.id)).toEqual(['dyn-1', 'dyn-2', 'dyn-3', 'dyn-4', 'dyn-5']);
   });
 
   it('fails verification when bilibili returns 412 instead of defaulting to pass', async () => {

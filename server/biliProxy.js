@@ -64,6 +64,18 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fetchWithRetry(url, init, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const response = await fetch(url, init);
+
+    if (response.ok || response.status !== 412 || attempt === retries) {
+      return response;
+    }
+
+    await sleep(1500 + attempt * 1500 + Math.floor(Math.random() * 500));
+  }
+}
+
 function normalizeDynamicItem(item) {
   return {
     id: item?.id_str ?? '',
@@ -224,7 +236,10 @@ export async function fetchBiliApi(params) {
     await sleep(500 + Math.floor(Math.random() * 500));
   }
 
-  const response = await fetch(requestUrl, { headers: buildHeaders() });
+  const requestInit = { headers: buildHeaders() };
+  const response = type === 'spaceDynamic'
+    ? await fetchWithRetry(requestUrl, requestInit)
+    : await fetch(requestUrl, requestInit);
 
   if (!response.ok) {
     throw new Error(`Bilibili upstream error: ${response.status} ${response.statusText}`);
