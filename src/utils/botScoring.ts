@@ -21,6 +21,7 @@ export interface BotReviewMetrics {
   forwardRatio: number;
   keywordRatio: number;
   burstCount: number;
+  recentForwardCount24hMax: number;
   privateDynamics: boolean;
 }
 
@@ -34,6 +35,8 @@ export interface BotReviewResult {
 const LOTTERY_KEYWORDS = ['互动抽奖', '抽奖', '中奖', '开奖', '转发抽奖', '平台开奖', '抽个', '打钱'];
 const BURST_WINDOW_SECONDS = 5 * 60;
 const BURST_TRIGGER_COUNT = 3;
+const LOOKBACK_WINDOW_SECONDS = 3 * 24 * 60 * 60;
+const FORWARD_LIMIT_24H = 3;
 
 function buildResult(overrides: Partial<BotReviewResult> & { metrics: BotReviewMetrics }): BotReviewResult {
   return {
@@ -63,6 +66,26 @@ function getBurstCount(dynamics: UserDynamicItem[]) {
   return burstCount;
 }
 
+function getRecentForwardCount24hMax(dynamics: UserDynamicItem[]) {
+  const cutoff = Math.floor(Date.now() / 1000) - LOOKBACK_WINDOW_SECONDS;
+  const forwards = dynamics
+    .filter((item) => item.type === 'DYNAMIC_TYPE_FORWARD' && item.createdAt >= cutoff)
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  let maxCount = 0;
+  let left = 0;
+
+  for (let right = 0; right < forwards.length; right += 1) {
+    while (forwards[right].createdAt - forwards[left].createdAt > 24 * 60 * 60) {
+      left += 1;
+    }
+
+    maxCount = Math.max(maxCount, right - left + 1);
+  }
+
+  return maxCount;
+}
+
 export function reviewCandidate({
   level,
   dynamics,
@@ -80,6 +103,7 @@ export function reviewCandidate({
     forwardRatio: 0,
     keywordRatio: 0,
     burstCount: 0,
+    recentForwardCount24hMax: 0,
     privateDynamics: !dynamicsVisible
   };
 
@@ -123,8 +147,26 @@ export function reviewCandidate({
   const repostCount = dynamics.filter((item) => item.type === 'DYNAMIC_TYPE_FORWARD').length;
   const keywordCount = dynamics.filter((item) => LOTTERY_KEYWORDS.some((keyword) => item.text.includes(keyword))).length;
   const burstCount = getBurstCount(dynamics);
+  const recentForwardCount24hMax = getRecentForwardCount24hMax(dynamics);
   const forwardRatio = repostCount / dynamicCount;
   const keywordRatio = keywordCount / dynamicCount;
+
+  if (recentForwardCount24hMax > FORWARD_LIMIT_24H) {
+    return buildResult({
+      passed: false,
+      score: 100,
+      reasonCodes: ['FORWARD_LIMIT_24H'],
+      metrics: {
+        level,
+        dynamicCount: dynamics.length,
+        forwardRatio,
+        keywordRatio,
+        burstCount,
+        recentForwardCount24hMax,
+        privateDynamics: false
+      }
+    });
+  }
 
   let score = 0;
   if (forwardRatio > config.forwardRatioLimit) {
@@ -151,6 +193,7 @@ export function reviewCandidate({
       forwardRatio,
       keywordRatio,
       burstCount,
+      recentForwardCount24hMax,
       privateDynamics: false
     }
   });

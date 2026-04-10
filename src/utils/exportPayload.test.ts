@@ -55,6 +55,7 @@ describe('buildExportPayload', () => {
               forwardRatio: 0,
               keywordRatio: 0,
               burstCount: 0,
+              recentForwardCount24hMax: 1,
               privateDynamics: false
             }
           }
@@ -75,6 +76,7 @@ describe('buildExportPayload', () => {
               forwardRatio: 1,
               keywordRatio: 1,
               burstCount: 1,
+              recentForwardCount24hMax: 4,
               privateDynamics: false
             }
           }

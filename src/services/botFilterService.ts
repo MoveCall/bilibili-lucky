@@ -6,40 +6,89 @@ interface UserDynamicsResult {
   items: UserDynamicItem[];
 }
 
-export async function fetchUserDynamics(hostMid: string, sampleSize: number): Promise<UserDynamicsResult> {
+const LOOKBACK_WINDOW_SECONDS = 3 * 24 * 60 * 60;
+const MAX_DYNAMIC_PAGES = 5;
+
+async function fetchDynamicsPage(hostMid: string, sampleSize: number, offset = '') {
   const params = new URLSearchParams({
     type: 'spaceDynamic',
     host_mid: hostMid,
     sampleSize: String(sampleSize)
   });
 
-  const response = await fetch(`/api/proxy?${params.toString()}`);
-  const payload = await response.json();
+  if (offset) {
+    params.set('offset', offset);
+  }
 
-  if (payload.code !== 0) {
-    if (payload.message?.includes('动态不可见')) {
-      return {
-        visible: false,
-        items: []
-      };
+  const response = await fetch(`/api/proxy?${params.toString()}`);
+  return response.json();
+}
+
+export async function fetchUserDynamics(hostMid: string, sampleSize: number): Promise<UserDynamicsResult> {
+  const items: UserDynamicItem[] = [];
+  const cutoff = Math.floor(Date.now() / 1000) - LOOKBACK_WINDOW_SECONDS;
+  let offset = '';
+
+  for (let page = 0; page < MAX_DYNAMIC_PAGES; page += 1) {
+    const payload = await fetchDynamicsPage(hostMid, sampleSize, offset);
+
+    if (payload.code !== 0) {
+      if (payload.message?.includes('动态不可见')) {
+        return {
+          visible: false,
+          items: []
+        };
+      }
+
+      throw new Error(payload.message || '获取用户动态失败');
     }
 
-    throw new Error(payload.message || '获取用户动态失败');
+    const pageItems = payload.data?.items ?? [];
+    items.push(...pageItems.filter((item: UserDynamicItem) => item.createdAt >= cutoff));
+
+    const oldestItem = pageItems[pageItems.length - 1];
+    if (!payload.data?.hasMore || !payload.data?.offset || (oldestItem && oldestItem.createdAt < cutoff)) {
+      break;
+    }
+
+    offset = payload.data.offset;
   }
 
   return {
     visible: true,
-    items: payload.data?.items ?? []
+    items
   };
 }
 
 export async function verifyCandidateByUid(candidate: CommentUser, config: BotFilterConfig): Promise<BotReviewResult> {
-  const dynamics = await fetchUserDynamics(candidate.mid, config.dynamicSampleSize);
+  try {
+    const dynamics = await fetchUserDynamics(candidate.mid, config.dynamicSampleSize);
 
-  return reviewCandidate({
-    level: candidate.level,
-    dynamics: dynamics.items,
-    dynamicsVisible: dynamics.visible,
-    config
-  });
+    return reviewCandidate({
+      level: candidate.level,
+      dynamics: dynamics.items,
+      dynamicsVisible: dynamics.visible,
+      config
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '获取用户动态失败';
+    if (message.includes('412 Precondition Failed')) {
+      return {
+        passed: false,
+        score: 100,
+        reasonCodes: ['UPSTREAM_BLOCKED'],
+        metrics: {
+          level: candidate.level,
+          dynamicCount: 0,
+          forwardRatio: 0,
+          keywordRatio: 0,
+          burstCount: 0,
+          recentForwardCount24hMax: 0,
+          privateDynamics: false
+        }
+      };
+    }
+
+    throw error;
+  }
 }

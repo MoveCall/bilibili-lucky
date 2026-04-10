@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reviewCandidate } from './botScoring';
 
 const baseConfig = {
@@ -10,6 +10,10 @@ const baseConfig = {
   privatePolicy: 'reject' as const,
   dynamicSampleSize: 20
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('reviewCandidate', () => {
   it('hard-fails low-level accounts', () => {
@@ -63,5 +67,27 @@ describe('reviewCandidate', () => {
     expect(result.passed).toBe(false);
     expect(result.metrics.forwardRatio).toBe(1);
     expect(result.metrics.keywordRatio).toBe(1);
+  });
+
+  it('fails accounts with more than 3 forwards in any rolling 24-hour window', () => {
+    const now = 1710000000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+
+    const result = reviewCandidate({
+      level: 5,
+      dynamicsVisible: true,
+      config: baseConfig,
+      dynamics: [
+        { id: 'd-1', type: 'DYNAMIC_TYPE_FORWARD', text: '转发 1', createdAt: now },
+        { id: 'd-2', type: 'DYNAMIC_TYPE_FORWARD', text: '转发 2', createdAt: now - 60 * 60 },
+        { id: 'd-3', type: 'DYNAMIC_TYPE_FORWARD', text: '转发 3', createdAt: now - 2 * 60 * 60 },
+        { id: 'd-4', type: 'DYNAMIC_TYPE_FORWARD', text: '转发 4', createdAt: now - 3 * 60 * 60 },
+        { id: 'd-5', type: 'DYNAMIC_TYPE_WORD', text: '原创内容', createdAt: now - 5 * 24 * 60 * 60 }
+      ]
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.reasonCodes).toContain('FORWARD_LIMIT_24H');
   });
 });

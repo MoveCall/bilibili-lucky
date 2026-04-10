@@ -46,13 +46,13 @@ describe('App bot filter flow', () => {
         passed: false,
         score: 90,
         reasonCodes: ['HIGH_FORWARD_RATIO'],
-        metrics: { level: 4, dynamicCount: 10, forwardRatio: 1, keywordRatio: 1, burstCount: 0, privateDynamics: false }
+        metrics: { level: 4, dynamicCount: 10, forwardRatio: 1, keywordRatio: 1, burstCount: 0, recentForwardCount24hMax: 2, privateDynamics: false }
       })
       .mockResolvedValueOnce({
         passed: true,
         score: 10,
         reasonCodes: [],
-        metrics: { level: 5, dynamicCount: 10, forwardRatio: 0.1, keywordRatio: 0, burstCount: 0, privateDynamics: false }
+        metrics: { level: 5, dynamicCount: 10, forwardRatio: 0.1, keywordRatio: 0, burstCount: 0, recentForwardCount24hMax: 1, privateDynamics: false }
       });
 
     render(<App />);
